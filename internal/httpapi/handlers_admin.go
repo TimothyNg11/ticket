@@ -3,6 +3,9 @@ package httpapi
 import (
 	"context"
 
+	"github.com/google/uuid"
+
+	"ticket/internal/apperr"
 	"ticket/internal/httpapi/gen"
 	"ticket/internal/inventory"
 )
@@ -33,4 +36,43 @@ func (s *Server) AdminCreateVenue(ctx context.Context, req gen.AdminCreateVenueR
 		resp.Sections = append(resp.Sections, gen.VenueSection{Id: sec.Section.ID, Name: sec.Section.Name, SeatCount: sec.SeatCount})
 	}
 	return resp, nil
+}
+
+// AdminCreateEvent creates a draft event with per-section prices.
+func (s *Server) AdminCreateEvent(ctx context.Context, req gen.AdminCreateEventRequestObject) (gen.AdminCreateEventResponseObject, error) {
+	admin, err := requireAdmin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.check(req.Body); err != nil {
+		return nil, err
+	}
+	prices := map[uuid.UUID]int32{}
+	for _, p := range req.Body.SectionPrices {
+		if _, dup := prices[p.SectionId]; dup {
+			return nil, apperr.Validation("section " + p.SectionId.String() + " priced twice")
+		}
+		prices[p.SectionId] = int32(p.PriceCents)
+	}
+	e, err := s.Inventory.CreateEvent(ctx, admin.UserID, inventory.EventSpec{
+		VenueID: req.Body.VenueId, Name: req.Body.Name,
+		StartsAt: req.Body.StartsAt, OnSaleAt: req.Body.OnSaleAt, SectionPrices: prices,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return gen.AdminCreateEvent201JSONResponse(toEvent(e)), nil
+}
+
+// AdminPublishEvent puts a draft event on sale.
+func (s *Server) AdminPublishEvent(ctx context.Context, req gen.AdminPublishEventRequestObject) (gen.AdminPublishEventResponseObject, error) {
+	admin, err := requireAdmin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	e, err := s.Inventory.PublishEvent(ctx, admin.UserID, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	return gen.AdminPublishEvent200JSONResponse(toEvent(e)), nil
 }
