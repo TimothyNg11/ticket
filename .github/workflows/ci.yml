@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with: { go-version-file: go.mod }
+      - name: go vet
+        run: go vet ./...
+      - uses: golangci/golangci-lint-action@v8
+        with: { version: v2.14.0 }
+
+  generated:
+    name: generated code is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with: { go-version-file: go.mod }
+      - uses: sqlc-dev/setup-sqlc@v4
+        with: { sqlc-version: 1.30.0 }
+      - run: sqlc generate
+      - run: go generate ./internal/httpapi
+      - name: fail if regeneration changed anything
+        run: git diff --exit-code -- internal/db/sqlc internal/httpapi/gen
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with: { go-version-file: go.mod }
+      # Integration tests start real Postgres containers through Testcontainers,
+      # using the runner's Docker daemon.
+      - name: unit + integration tests (race detector on)
+        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+      - name: coverage summary
+        run: |
+          go tool cover -func=coverage.out | tail -1
+          echo "### Coverage: $(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: coverage, path: coverage.out }
+
+  vuln-scan:
+    name: dependency scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  build:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: [api, workers, payments_mock]
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/ticket-${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: SERVICE=${{ matrix.service }}
+          load: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      - name: scan image (fail on critical)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: push to GHCR (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE:${{ github.sha }}"
+
+  smoke:
+    name: compose smoke test
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with: { go-version-file: go.mod }
+      - name: generate throwaway secrets
+        run: |
+          {
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "JWT_SECRET=$(openssl rand -hex 32)"
+            echo "TICKET_SIGNING_KEY=$(openssl rand -hex 32)"
+            echo "ADMIN_EMAILS=admin@example.com"
+          } > .env
+      - name: start stack
+        run: |
+          docker compose --env-file .env -f deploy/compose/docker-compose.yml up --build -d
+          for i in $(seq 120); do curl -fs localhost:8080/readyz && exit 0; sleep 1; done
+          exit 1
+      - name: smoke test
+        run: go run ./tools/smoke
+      - name: logs on failure
+        if: failure()
+        run: docker compose --env-file .env -f deploy/compose/docker-compose.yml logs --no-color

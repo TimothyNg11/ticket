@@ -1,0 +1,37 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # The defaults (errcheck, govet, ineffassign, staticcheck, unused) plus checks
+  # that catch real bugs in this kind of code.
+  enable:
+    - bodyclose     # unclosed HTTP response bodies leak connections
+    - gosec         # security smells (weak crypto, injection, file perms)
+    - errorlint     # errors compared with == instead of errors.Is/As
+    - noctx         # HTTP requests without a context can't be cancelled
+    - rowserrcheck  # forgotten rows.Err()
+    - sqlclosecheck
+    - misspell
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: exported # doc comments on exported identifiers
+  exclusions:
+    generated: strict
+    rules:
+      # Tests may use simple HTTP calls and fixed test secrets.
+      - path: _test\.go
+        linters: [gosec, noctx, bodyclose, errcheck]
+      - path: tools/
+        linters: [noctx]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: [ticket]

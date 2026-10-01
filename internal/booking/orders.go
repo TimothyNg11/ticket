@@ -35,7 +35,7 @@ func (s *Service) GetOrder(ctx context.Context, userID, orderID uuid.UUID) (Orde
 // ListOrders returns the user's most recent orders, newest first.
 func (s *Service) ListOrders(ctx context.Context, userID uuid.UUID, limit int) ([]Order, error) {
 	q := sqlc.New(s.pool)
-	orders, err := q.ListOrdersByUser(ctx, sqlc.ListOrdersByUserParams{UserID: userID, Limit: int32(limit)})
+	orders, err := q.ListOrdersByUser(ctx, sqlc.ListOrdersByUserParams{UserID: userID, Limit: int32(min(limit, 1000))}) //nolint:gosec // clamped
 	if err != nil {
 		return nil, err
 	}

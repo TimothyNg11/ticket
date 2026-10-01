@@ -57,6 +57,6 @@ func VerifyPassword(pw, encoded string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	got := argon2.IDKey([]byte(pw), salt, iters, mem, threads, uint32(len(want)))
+	got := argon2.IDKey([]byte(pw), salt, iters, mem, threads, uint32(len(want))) //nolint:gosec // len(want) is the stored key length (32)
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }

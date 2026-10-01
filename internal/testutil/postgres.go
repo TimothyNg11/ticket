@@ -10,9 +10,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,7 +44,19 @@ func RunWithPostgres(m *testing.M, out **PG) int {
 	if testing.Short() {
 		return m.Run()
 	}
-	p, err := start(context.Background())
+	pinDockerHost()
+	// Container startup is retried: when several test packages start containers at
+	// the same moment, Testcontainers' Docker-provider detection and reaper startup
+	// occasionally fail transiently (seen on Docker Desktop for Windows).
+	var p *PG
+	var err error
+	for attempt := 1; attempt <= 4; attempt++ {
+		if p, err = start(context.Background()); err == nil {
+			break
+		}
+		fmt.Fprintf(os.Stderr, "testutil: start postgres (attempt %d): %v\n", attempt, err)
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "testutil: start postgres:", err)
 		return 1
@@ -132,4 +148,20 @@ func CreateUser(t *testing.T, pool *pgxpool.Pool, email, role string) uuid.UUID 
 		t.Fatalf("create user: %v", err)
 	}
 	return id
+}
+
+// pinDockerHost sets DOCKER_HOST from the active docker context when it is unset
+// on Windows. Testcontainers otherwise probes for the daemon itself and caches the
+// answer for the whole process; under concurrent package startup that probe can
+// fail ("rootless Docker is not supported on Windows") and never recover.
+func pinDockerHost() {
+	if runtime.GOOS != "windows" || os.Getenv("DOCKER_HOST") != "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}").Output()
+	if host := strings.TrimSpace(string(out)); err == nil && host != "" {
+		_ = os.Setenv("DOCKER_HOST", host)
+	}
 }

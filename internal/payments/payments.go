@@ -19,8 +19,10 @@ import (
 type Status string
 
 const (
+	// Succeeded means the money moved.
 	Succeeded Status = "succeeded"
-	Declined  Status = "declined"
+	// Declined means the provider refused; nothing was charged.
+	Declined Status = "declined"
 )
 
 // Result is the provider's answer for a charge or refund.
@@ -93,9 +95,9 @@ func (c *HTTPClient) do(req *http.Request) (Result, error) {
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		// Timeouts and connection errors: the request may have reached the provider.
-		return Result{}, fmt.Errorf("%w: %v", ErrUnknownOutcome, err)
+		return Result{}, fmt.Errorf("%w: %w", ErrUnknownOutcome, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
 		return Result{}, ErrNotFound
@@ -106,7 +108,7 @@ func (c *HTTPClient) do(req *http.Request) (Result, error) {
 	}
 	var r Result
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return Result{}, fmt.Errorf("%w: bad response: %v", ErrUnknownOutcome, err)
+		return Result{}, fmt.Errorf("%w: bad response: %w", ErrUnknownOutcome, err)
 	}
 	if r.Status != Succeeded && r.Status != Declined {
 		return Result{}, fmt.Errorf("%w: unexpected status %q", ErrUnknownOutcome, r.Status)

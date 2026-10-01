@@ -52,7 +52,7 @@ func (s *Server) AdminCreateEvent(ctx context.Context, req gen.AdminCreateEventR
 		if _, dup := prices[p.SectionId]; dup {
 			return nil, apperr.Validation("section " + p.SectionId.String() + " priced twice")
 		}
-		prices[p.SectionId] = int32(p.PriceCents)
+		prices[p.SectionId] = int32(p.PriceCents) //nolint:gosec // validated: max=10000000
 	}
 	e, err := s.Inventory.CreateEvent(ctx, admin.UserID, inventory.EventSpec{
 		VenueID: req.Body.VenueId, Name: req.Body.Name,

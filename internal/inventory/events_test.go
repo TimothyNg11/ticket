@@ -141,4 +141,8 @@ func TestListEventsPaginates(t *testing.T) {
 	}
 	assert.Len(t, seen, 5)
 	assert.Equal(t, 3, pages)
+
+	page, _, err := f.s.ListEvents(ctx, "", 0)
+	require.NoError(t, err, "a non-positive limit is clamped, not a panic")
+	assert.Len(t, page, 1)
 }

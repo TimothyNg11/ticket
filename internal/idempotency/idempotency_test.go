@@ -3,6 +3,7 @@ package idempotency_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -56,7 +57,8 @@ func newHarness(t *testing.T) *harness {
 		id, ok := ctx.Value(userKey{}).(uuid.UUID)
 		return id, ok
 	}, func(w http.ResponseWriter, r *http.Request, err error) {
-		ae := err.(*apperr.Error)
+		var ae *apperr.Error
+		require.True(t, errors.As(err, &ae))
 		w.WriteHeader(ae.Status)
 		_ = json.NewEncoder(w).Encode(map[string]string{"code": ae.Code})
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))

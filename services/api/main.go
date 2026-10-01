@@ -111,11 +111,12 @@ func healthcheck() error {
 		addr = ":8080"
 	}
 	client := http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost" + addr + "/healthz")
+	// addr comes from our own HTTP_ADDR setting, not from a request.
+	resp, err := client.Get("http://localhost" + addr + "/healthz") //nolint:gosec,noctx // see above
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("healthz returned %d", resp.StatusCode)
 	}

@@ -84,6 +84,7 @@ func TestHoldCheckoutCancelOverHTTP(t *testing.T) {
 
 	status, body = call(t, e.srv, "GET", "/v1/orders/"+order.ID, e.userToken(t), nil)
 	assert.Equal(t, 404, status, "another user can't see it")
+	assert.Equal(t, "NOT_FOUND", errCode(t, body))
 	status, body = call(t, e.srv, "GET", "/v1/orders", tok, nil)
 	require.Equal(t, 200, status)
 	assert.Contains(t, string(body), order.ID)
