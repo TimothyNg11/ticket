@@ -40,6 +40,48 @@ type EventSeat struct {
 	Version    int32
 }
 
+type Hold struct {
+	ID        uuid.UUID
+	EventID   uuid.UUID
+	UserID    uuid.UUID
+	ExpiresAt time.Time
+	Status    string
+	CreatedAt time.Time
+}
+
+type IdempotencyKey struct {
+	UserID         uuid.UUID
+	Key            string
+	RequestHash    string
+	ResponseStatus *int32
+	ResponseBody   []byte
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
+}
+
+type Order struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	EventID        uuid.UUID
+	HoldID         uuid.UUID
+	TotalCents     int32
+	Status         string
+	IdempotencyKey string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type Payment struct {
+	ID             uuid.UUID
+	OrderID        uuid.UUID
+	Kind           string
+	ProviderRef    *string
+	AmountCents    int32
+	Status         string
+	IdempotencyKey string
+	CreatedAt      time.Time
+}
+
 type RefreshToken struct {
 	ID         uuid.UUID
 	UserID     uuid.UUID
@@ -62,6 +104,15 @@ type Section struct {
 	ID      uuid.UUID
 	VenueID uuid.UUID
 	Name    string
+}
+
+type Ticket struct {
+	ID          uuid.UUID
+	OrderID     uuid.UUID
+	EventSeatID uuid.UUID
+	Status      string
+	QrToken     string
+	CreatedAt   time.Time
 }
 
 type User struct {
