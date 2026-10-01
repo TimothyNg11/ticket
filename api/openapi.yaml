@@ -1,0 +1,249 @@
+openapi: 3.0.3
+info:
+  title: Ticket API
+  version: 0.1.0
+  description: Flash-sale ticketing API. Every error uses the Error schema.
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness; the process is up.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Health" } } } }
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Readiness; dependencies (Postgres) are reachable.
+      responses:
+        "200": { description: Ready, content: { application/json: { schema: { $ref: "#/components/schemas/Health" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/auth/register:
+    post:
+      operationId: register
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RegisterRequest" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/auth/login:
+    post:
+      operationId: login
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/LoginRequest" } } } }
+      responses:
+        "200": { description: Tokens, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/auth/refresh:
+    post:
+      operationId: refreshTokens
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RefreshRequest" } } } }
+      responses:
+        "200": { description: Rotated tokens, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RefreshRequest" } } } }
+      responses:
+        "204": { description: Refresh token revoked }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/events:
+    get:
+      operationId: listEvents
+      parameters:
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200": { description: Page of events, content: { application/json: { schema: { $ref: "#/components/schemas/EventPage" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/events/{id}:
+    get:
+      operationId: getEvent
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Event, content: { application/json: { schema: { $ref: "#/components/schemas/Event" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/events/{id}/seatmap:
+    get:
+      operationId: getSeatMap
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Seat map, content: { application/json: { schema: { $ref: "#/components/schemas/SeatMap" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/admin/venues:
+    post:
+      operationId: adminCreateVenue
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CreateVenueRequest" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Venue" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/admin/events:
+    post:
+      operationId: adminCreateEvent
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CreateEventRequest" } } } }
+      responses:
+        "201": { description: Created (draft), content: { application/json: { schema: { $ref: "#/components/schemas/Event" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/admin/events/{id}/publish:
+    post:
+      operationId: adminPublishEvent
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Published, content: { application/json: { schema: { $ref: "#/components/schemas/Event" } } } }
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    ID: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string, example: SEAT_UNAVAILABLE }
+            message: { type: string }
+            request_id: { type: string }
+    Health:
+      type: object
+      required: [status]
+      properties: { status: { type: string } }
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, maxLength: 254, x-oapi-codegen-extra-tags: { validate: "required,email,max=254" } }
+        password: { type: string, minLength: 12, maxLength: 128, x-oapi-codegen-extra-tags: { validate: "required,min=12,max=128" } }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, x-oapi-codegen-extra-tags: { validate: "required,max=254" } }
+        password: { type: string, x-oapi-codegen-extra-tags: { validate: "required,max=128" } }
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string, x-oapi-codegen-extra-tags: { validate: "required,max=128" } }
+    User:
+      type: object
+      required: [id, email, role, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        role: { type: string, description: "user or admin" }
+        created_at: { type: string, format: date-time }
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, example: Bearer }
+        expires_in: { type: integer, description: Access token lifetime in seconds }
+    Event:
+      type: object
+      required: [id, venue_id, name, starts_at, on_sale_at, status]
+      properties:
+        id: { type: string, format: uuid }
+        venue_id: { type: string, format: uuid }
+        name: { type: string }
+        starts_at: { type: string, format: date-time }
+        on_sale_at: { type: string, format: date-time }
+        status: { type: string, description: "draft, on_sale, sold_out, or ended" }
+    EventPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Event" } }
+        next_cursor: { type: string, description: Absent on the last page }
+    SeatMap:
+      type: object
+      required: [event_id, sections]
+      properties:
+        event_id: { type: string, format: uuid }
+        sections: { type: array, items: { $ref: "#/components/schemas/SeatMapSection" } }
+    SeatMapSection:
+      type: object
+      required: [id, name, seats]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        seats: { type: array, items: { $ref: "#/components/schemas/SeatMapSeat" } }
+    SeatMapSeat:
+      type: object
+      required: [event_seat_id, row, number, price_cents, state]
+      properties:
+        event_seat_id: { type: string, format: uuid }
+        row: { type: string }
+        number: { type: integer }
+        price_cents: { type: integer }
+        state: { type: string, description: "available, held, or sold" }
+    CreateVenueRequest:
+      type: object
+      required: [name, timezone, sections]
+      properties:
+        name: { type: string, x-oapi-codegen-extra-tags: { validate: "required,max=200" } }
+        timezone: { type: string, example: America/New_York, x-oapi-codegen-extra-tags: { validate: "required,max=64" } }
+        sections:
+          type: array
+          items: { $ref: "#/components/schemas/SectionSpec" }
+          x-oapi-codegen-extra-tags: { validate: "required,min=1,max=50,dive" }
+    SectionSpec:
+      type: object
+      required: [name, rows]
+      properties:
+        name: { type: string, x-oapi-codegen-extra-tags: { validate: "required,max=100" } }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/RowSpec" }
+          x-oapi-codegen-extra-tags: { validate: "required,min=1,max=100,dive" }
+    RowSpec:
+      type: object
+      required: [label, seat_count]
+      properties:
+        label: { type: string, x-oapi-codegen-extra-tags: { validate: "required,max=10" } }
+        seat_count: { type: integer, x-oapi-codegen-extra-tags: { validate: "min=1,max=200" } }
+    Venue:
+      type: object
+      required: [id, name, timezone, sections]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        timezone: { type: string }
+        sections: { type: array, items: { $ref: "#/components/schemas/VenueSection" } }
+    VenueSection:
+      type: object
+      required: [id, name, seat_count]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        seat_count: { type: integer }
+    CreateEventRequest:
+      type: object
+      required: [venue_id, name, starts_at, on_sale_at, section_prices]
+      properties:
+        venue_id: { type: string, format: uuid, x-oapi-codegen-extra-tags: { validate: "required" } }
+        name: { type: string, x-oapi-codegen-extra-tags: { validate: "required,max=200" } }
+        starts_at: { type: string, format: date-time, x-oapi-codegen-extra-tags: { validate: "required" } }
+        on_sale_at: { type: string, format: date-time, x-oapi-codegen-extra-tags: { validate: "required" } }
+        section_prices:
+          type: array
+          description: One entry per section of the venue.
+          items: { $ref: "#/components/schemas/SectionPrice" }
+          x-oapi-codegen-extra-tags: { validate: "required,min=1,dive" }
+    SectionPrice:
+      type: object
+      required: [section_id, price_cents]
+      properties:
+        section_id: { type: string, format: uuid, x-oapi-codegen-extra-tags: { validate: "required" } }
+        price_cents: { type: integer, x-oapi-codegen-extra-tags: { validate: "min=1,max=10000000" } }
