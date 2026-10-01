@@ -101,6 +101,24 @@ type LoginRequest struct {
 	Password string `json:"password" validate:"required,max=128"`
 }
 
+// Order defines model for Order.
+type Order struct {
+	CreatedAt time.Time          `json:"created_at"`
+	EventId   openapi_types.UUID `json:"event_id"`
+	HoldId    openapi_types.UUID `json:"hold_id"`
+	Id        openapi_types.UUID `json:"id"`
+
+	// Status pending_payment, confirmed, failed, cancelled, or refunded
+	Status     string   `json:"status"`
+	Tickets    []Ticket `json:"tickets"`
+	TotalCents int      `json:"total_cents"`
+}
+
+// OrderList defines model for OrderList.
+type OrderList struct {
+	Items []Order `json:"items"`
+}
+
 // RefreshRequest defines model for RefreshRequest.
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required,max=128"`
@@ -152,6 +170,18 @@ type SectionPrice struct {
 type SectionSpec struct {
 	Name string    `json:"name" validate:"required,max=100"`
 	Rows []RowSpec `json:"rows" validate:"required,min=1,max=100,dive"`
+}
+
+// Ticket defines model for Ticket.
+type Ticket struct {
+	EventSeatId openapi_types.UUID `json:"event_seat_id"`
+	Id          openapi_types.UUID `json:"id"`
+
+	// QrToken HMAC-signed payload to render as a QR code
+	QrToken string `json:"qr_token"`
+
+	// Status valid or void
+	Status string `json:"status"`
 }
 
 // TokenPair defines model for TokenPair.
@@ -211,6 +241,23 @@ type CreateHoldParams struct {
 
 // ReleaseHoldParams defines parameters for ReleaseHold.
 type ReleaseHoldParams struct {
+	// IdempotencyKey Client-chosen key (1-64 chars). Retrying with the same key returns the stored response instead of repeating the action.
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// CheckoutParams defines parameters for Checkout.
+type CheckoutParams struct {
+	// IdempotencyKey Client-chosen key (1-64 chars). Retrying with the same key returns the stored response instead of repeating the action.
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ListOrdersParams defines parameters for ListOrders.
+type ListOrdersParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// CancelOrderParams defines parameters for CancelOrder.
+type CancelOrderParams struct {
 	// IdempotencyKey Client-chosen key (1-64 chars). Retrying with the same key returns the stored response instead of repeating the action.
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
@@ -280,6 +327,18 @@ type ServerInterface interface {
 	// ReleaseHold Release a hold you own.
 	// (DELETE /v1/holds/{id})
 	ReleaseHold(w http.ResponseWriter, r *http.Request, id ID, params ReleaseHoldParams)
+	// Checkout Create an order for a hold and charge for it.
+	// (POST /v1/holds/{id}/checkout)
+	Checkout(w http.ResponseWriter, r *http.Request, id ID, params CheckoutParams)
+
+	// (GET /v1/orders)
+	ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams)
+
+	// (GET /v1/orders/{id})
+	GetOrder(w http.ResponseWriter, r *http.Request, id ID)
+	// CancelOrder Cancel a confirmed order before the event and refund it.
+	// (POST /v1/orders/{id}/cancel)
+	CancelOrder(w http.ResponseWriter, r *http.Request, id ID, params CancelOrderParams)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -357,6 +416,28 @@ func (_ Unimplemented) GetSeatMap(w http.ResponseWriter, r *http.Request, id ID)
 // ReleaseHold Release a hold you own.
 // (DELETE /v1/holds/{id})
 func (_ Unimplemented) ReleaseHold(w http.ResponseWriter, r *http.Request, id ID, params ReleaseHoldParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Checkout Create an order for a hold and charge for it.
+// (POST /v1/holds/{id}/checkout)
+func (_ Unimplemented) Checkout(w http.ResponseWriter, r *http.Request, id ID, params CheckoutParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /v1/orders)
+func (_ Unimplemented) ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /v1/orders/{id})
+func (_ Unimplemented) GetOrder(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CancelOrder Cancel a confirmed order before the event and refund it.
+// (POST /v1/orders/{id}/cancel)
+func (_ Unimplemented) CancelOrder(w http.ResponseWriter, r *http.Request, id ID, params CancelOrderParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -713,6 +794,173 @@ func (siw *ServerInterfaceWrapper) ReleaseHold(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// Checkout operation middleware
+func (siw *ServerInterfaceWrapper) Checkout(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CheckoutParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Checkout(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOrders operation middleware
+func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOrdersParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrders(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrder operation middleware
+func (siw *ServerInterfaceWrapper) GetOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrder(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelOrder operation middleware
+func (siw *ServerInterfaceWrapper) CancelOrder(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CancelOrderParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelOrder(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -858,6 +1106,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/v1/holds/{id}", wrapper.ReleaseHold)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/holds/{id}/checkout", wrapper.Checkout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/v1/orders", wrapper.ListOrders)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/v1/orders/{id}", wrapper.GetOrder)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/orders/{id}/cancel", wrapper.CancelOrder)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/v1/admin/venues", wrapper.AdminCreateVenue)
@@ -1392,6 +1652,178 @@ func (response ReleaseHolddefaultJSONResponse) VisitReleaseHoldResponse(w http.R
 	return err
 }
 
+type CheckoutRequestObject struct {
+	Id     ID `json:"id"`
+	Params CheckoutParams
+}
+
+type CheckoutResponseObject interface {
+	VisitCheckoutResponse(w http.ResponseWriter) error
+}
+
+type Checkout201JSONResponse Order
+
+func (response Checkout201JSONResponse) VisitCheckoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Checkout202JSONResponse Order
+
+func (response Checkout202JSONResponse) VisitCheckoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CheckoutdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CheckoutdefaultJSONResponse) VisitCheckoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOrdersRequestObject struct {
+	Params ListOrdersParams
+}
+
+type ListOrdersResponseObject interface {
+	VisitListOrdersResponse(w http.ResponseWriter) error
+}
+
+type ListOrders200JSONResponse OrderList
+
+func (response ListOrders200JSONResponse) VisitListOrdersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOrdersdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListOrdersdefaultJSONResponse) VisitListOrdersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOrderRequestObject struct {
+	Id ID `json:"id"`
+}
+
+type GetOrderResponseObject interface {
+	VisitGetOrderResponse(w http.ResponseWriter) error
+}
+
+type GetOrder200JSONResponse Order
+
+func (response GetOrder200JSONResponse) VisitGetOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOrderdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetOrderdefaultJSONResponse) VisitGetOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOrderRequestObject struct {
+	Id     ID `json:"id"`
+	Params CancelOrderParams
+}
+
+type CancelOrderResponseObject interface {
+	VisitCancelOrderResponse(w http.ResponseWriter) error
+}
+
+type CancelOrder200JSONResponse Order
+
+func (response CancelOrder200JSONResponse) VisitCancelOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelOrderdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CancelOrderdefaultJSONResponse) VisitCancelOrderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// Healthz Liveness; the process is up.
@@ -1436,6 +1868,18 @@ type StrictServerInterface interface {
 	// ReleaseHold Release a hold you own.
 	// (DELETE /v1/holds/{id})
 	ReleaseHold(ctx context.Context, request ReleaseHoldRequestObject) (ReleaseHoldResponseObject, error)
+	// Checkout Create an order for a hold and charge for it.
+	// (POST /v1/holds/{id}/checkout)
+	Checkout(ctx context.Context, request CheckoutRequestObject) (CheckoutResponseObject, error)
+
+	// (GET /v1/orders)
+	ListOrders(ctx context.Context, request ListOrdersRequestObject) (ListOrdersResponseObject, error)
+
+	// (GET /v1/orders/{id})
+	GetOrder(ctx context.Context, request GetOrderRequestObject) (GetOrderResponseObject, error)
+	// CancelOrder Cancel a confirmed order before the event and refund it.
+	// (POST /v1/orders/{id}/cancel)
+	CancelOrder(ctx context.Context, request CancelOrderRequestObject) (CancelOrderResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -1876,46 +2320,160 @@ func (sh *strictHandler) ReleaseHold(w http.ResponseWriter, r *http.Request, id 
 	}
 }
 
+// Checkout operation middleware
+func (sh *strictHandler) Checkout(w http.ResponseWriter, r *http.Request, id ID, params CheckoutParams) {
+	var request CheckoutRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Checkout(ctx, request.(CheckoutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Checkout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CheckoutResponseObject); ok {
+		if err := validResponse.VisitCheckoutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListOrders operation middleware
+func (sh *strictHandler) ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams) {
+	var request ListOrdersRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListOrders(ctx, request.(ListOrdersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListOrders")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListOrdersResponseObject); ok {
+		if err := validResponse.VisitListOrdersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOrder operation middleware
+func (sh *strictHandler) GetOrder(w http.ResponseWriter, r *http.Request, id ID) {
+	var request GetOrderRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOrder(ctx, request.(GetOrderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOrder")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOrderResponseObject); ok {
+		if err := validResponse.VisitGetOrderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CancelOrder operation middleware
+func (sh *strictHandler) CancelOrder(w http.ResponseWriter, r *http.Request, id ID, params CancelOrderParams) {
+	var request CancelOrderRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelOrder(ctx, request.(CancelOrderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelOrder")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelOrderResponseObject); ok {
+		if err := validResponse.VisitCancelOrderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"+HjhxFFXyCGMWLjIQuZEPoguwvi/AQA=",
+	"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",
+	"waSJYOv1fwcA",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

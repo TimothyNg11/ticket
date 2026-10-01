@@ -15,6 +15,11 @@ type Config struct {
 	JWTSecret       []byte
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+	// TicketSigningKey signs ticket QR payloads. Separate from JWTSecret so the
+	// two can be rotated independently.
+	TicketSigningKey []byte
+	PaymentsURL      string
+	HoldTTL          time.Duration
 	// AdminEmails lists (lower-cased) emails that receive the admin role when they
 	// register. It is how the first admin is bootstrapped; see docs/decisions/0002.
 	AdminEmails map[string]bool
@@ -24,10 +29,12 @@ type Config struct {
 // function as a parameter keeps Load testable without mutating the process environment.
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{
-		HTTPAddr:    getenv("HTTP_ADDR"),
-		DatabaseURL: getenv("DATABASE_URL"),
-		JWTSecret:   []byte(getenv("JWT_SECRET")),
-		AdminEmails: map[string]bool{},
+		HTTPAddr:         getenv("HTTP_ADDR"),
+		DatabaseURL:      getenv("DATABASE_URL"),
+		JWTSecret:        []byte(getenv("JWT_SECRET")),
+		TicketSigningKey: []byte(getenv("TICKET_SIGNING_KEY")),
+		PaymentsURL:      getenv("PAYMENTS_URL"),
+		AdminEmails:      map[string]bool{},
 	}
 	if c.HTTPAddr == "" {
 		c.HTTPAddr = ":8080"
@@ -39,7 +46,16 @@ func Load(getenv func(string) string) (Config, error) {
 	if len(c.JWTSecret) < 32 {
 		return Config{}, errors.New("JWT_SECRET must be at least 32 bytes")
 	}
+	if len(c.TicketSigningKey) < 32 {
+		return Config{}, errors.New("TICKET_SIGNING_KEY must be at least 32 bytes")
+	}
+	if c.PaymentsURL == "" {
+		return Config{}, errors.New("PAYMENTS_URL is required")
+	}
 	var err error
+	if c.HoldTTL, err = duration(getenv, "HOLD_TTL", 10*time.Minute); err != nil {
+		return Config{}, err
+	}
 	if c.AccessTokenTTL, err = duration(getenv, "ACCESS_TOKEN_TTL", 15*time.Minute); err != nil {
 		return Config{}, err
 	}

@@ -23,10 +23,12 @@ import (
 
 	"ticket/internal/account"
 	"ticket/internal/auth"
+	"ticket/internal/booking"
 	"ticket/internal/config"
 	"ticket/internal/db"
 	"ticket/internal/httpapi"
 	"ticket/internal/inventory"
+	"ticket/internal/payments"
 )
 
 func main() {
@@ -74,7 +76,9 @@ func serve(log *slog.Logger) error {
 			Tokens:    tokens,
 			Accounts:  account.New(pool, tokens, cfg.RefreshTokenTTL, cfg.AdminEmails),
 			Inventory: inventory.New(pool),
-			Log:       log,
+			Booking: booking.New(pool, payments.NewHTTPClient(cfg.PaymentsURL, 3*time.Second),
+				auth.NewTicketSigner(cfg.TicketSigningKey), cfg.HoldTTL),
+			Log: log,
 		}),
 		// Bound every phase of a connection so slow or idle clients can't pin goroutines.
 		ReadHeaderTimeout: 5 * time.Second,

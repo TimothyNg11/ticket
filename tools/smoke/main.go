@@ -79,6 +79,7 @@ func run() error {
 	var sm struct {
 		Sections []struct {
 			Seats []struct {
+				ID    string `json:"event_seat_id"`
 				State string `json:"state"`
 			} `json:"seats"`
 		} `json:"sections"`
@@ -88,6 +89,34 @@ func run() error {
 	}
 	if len(sm.Sections) != 1 || len(sm.Sections[0].Seats) != 10 {
 		return fmt.Errorf("seat map: want 1 section with 10 seats, got %+v", sm)
+	}
+
+	// Phase 2: hold two seats, buy them, then cancel for a refund.
+	var hold struct {
+		ID string `json:"id"`
+	}
+	seats := []string{sm.Sections[0].Seats[0].ID, sm.Sections[0].Seats[1].ID}
+	if err := expect(201, &hold, "POST", "/v1/events/"+event.ID+"/holds", user, map[string]any{"seat_ids": seats}); err != nil {
+		return fmt.Errorf("hold: %w", err)
+	}
+	var order struct {
+		ID      string `json:"id"`
+		Status  string `json:"status"`
+		Tickets []struct {
+			QR string `json:"qr_token"`
+		} `json:"tickets"`
+	}
+	if err := expect(201, &order, "POST", "/v1/holds/"+hold.ID+"/checkout", user, nil); err != nil {
+		return fmt.Errorf("checkout: %w", err)
+	}
+	if order.Status != "confirmed" || len(order.Tickets) != 2 {
+		return fmt.Errorf("checkout: want confirmed order with 2 tickets, got %+v", order)
+	}
+	if err := expect(200, &order, "POST", "/v1/orders/"+order.ID+"/cancel", user, nil); err != nil {
+		return fmt.Errorf("cancel: %w", err)
+	}
+	if order.Status != "refunded" {
+		return fmt.Errorf("cancel: want refunded, got %s", order.Status)
 	}
 	return nil
 }
@@ -133,6 +162,7 @@ func do(method, path, token string, body any) (int, []byte, error) {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, nil, err

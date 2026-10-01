@@ -14,8 +14,10 @@ func env(m map[string]string) func(string) string {
 
 func valid() map[string]string {
 	return map[string]string{
-		"DATABASE_URL": "postgres://u:p@localhost:5432/db",
-		"JWT_SECRET":   "0123456789abcdef0123456789abcdef",
+		"DATABASE_URL":       "postgres://u:p@localhost:5432/db",
+		"JWT_SECRET":         "0123456789abcdef0123456789abcdef",
+		"TICKET_SIGNING_KEY": "fedcba9876543210fedcba9876543210",
+		"PAYMENTS_URL":       "http://payments:8081",
 	}
 }
 
@@ -26,6 +28,19 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, 15*time.Minute, c.AccessTokenTTL)
 	assert.Equal(t, 30*24*time.Hour, c.RefreshTokenTTL)
 	assert.Empty(t, c.AdminEmails)
+	assert.Equal(t, 10*time.Minute, c.HoldTTL)
+	assert.Equal(t, "http://payments:8081", c.PaymentsURL)
+}
+
+func TestLoadRequiresTicketKeyAndPayments(t *testing.T) {
+	m := valid()
+	m["TICKET_SIGNING_KEY"] = "short"
+	_, err := Load(env(m))
+	assert.ErrorContains(t, err, "TICKET_SIGNING_KEY")
+	m = valid()
+	delete(m, "PAYMENTS_URL")
+	_, err = Load(env(m))
+	assert.ErrorContains(t, err, "PAYMENTS_URL")
 }
 
 func TestLoadRequiresDatabaseURL(t *testing.T) {

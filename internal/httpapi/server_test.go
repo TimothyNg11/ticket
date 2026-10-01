@@ -12,12 +12,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"ticket/internal/account"
 	"ticket/internal/auth"
+	"ticket/internal/booking"
 	"ticket/internal/inventory"
+	"ticket/internal/payments"
+	"ticket/internal/payments/mock"
 	"ticket/internal/testutil"
 )
 
@@ -30,24 +35,45 @@ var testSecret = []byte("0123456789abcdef0123456789abcdef")
 // testAdminEmail is registered with the admin role in every test server.
 const testAdminEmail = "admin@example.com"
 
-func newTestServer(t *testing.T) *httptest.Server {
+// testEnv is a full API over its own database, with a mock payment provider.
+type testEnv struct {
+	srv    *httptest.Server
+	pool   *pgxpool.Pool
+	tokens *auth.TokenIssuer
+	pay    *mock.Server
+}
+
+func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	pool := pg.NewDB(t)
 	tokens := auth.NewTokenIssuer(testSecret, 15*time.Minute)
+	pay := mock.New(mock.Config{}, nil)
+	paySrv := httptest.NewServer(pay)
+	t.Cleanup(paySrv.Close)
 	h := NewHandler(Deps{
 		Pool:      pool,
 		Tokens:    tokens,
 		Accounts:  account.New(pool, tokens, 24*time.Hour, map[string]bool{testAdminEmail: true}),
 		Inventory: inventory.New(pool),
-		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Booking: booking.New(pool, payments.NewHTTPClient(paySrv.URL, time.Second),
+			auth.NewTicketSigner([]byte("ticket-signing-key-ticket-signing-key")), 10*time.Minute),
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return srv
+	return &testEnv{srv: srv, pool: pool, tokens: tokens, pay: pay}
 }
 
-// call sends a JSON request and returns the status and raw body.
+func newTestServer(t *testing.T) *httptest.Server { return newTestEnv(t).srv }
+
+// call sends a JSON request and returns the status and raw body. Writes get a
+// fresh Idempotency-Key unless the test sets one with callWithKey.
 func call(t *testing.T, srv *httptest.Server, method, path, token string, body any) (int, []byte) {
+	t.Helper()
+	return callWithKey(t, srv, method, path, token, uuid.NewString(), body)
+}
+
+func callWithKey(t *testing.T, srv *httptest.Server, method, path, token, key string, body any) (int, []byte) {
 	t.Helper()
 	var r io.Reader
 	if body != nil {
@@ -60,6 +86,9 @@ func call(t *testing.T, srv *httptest.Server, method, path, token string, body a
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
 	}
 	resp, err := srv.Client().Do(req)
 	require.NoError(t, err)
