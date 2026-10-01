@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-playground/validator/v10"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"ticket/internal/account"
@@ -44,11 +45,20 @@ func NewHandler(d Deps) http.Handler {
 	s := &Server{Deps: d, validate: validator.New(validator.WithRequiredStructEnabled())}
 
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.Recoverer, s.authenticate)
+	r.Use(middleware.RequestID, s.recoverer, limitBody, s.authenticate)
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) { s.writeError(w, r, apperr.NotFound("route")) })
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		s.writeError(w, r, &apperr.Error{Status: http.StatusMethodNotAllowed, Code: "METHOD_NOT_ALLOWED", Message: "method not allowed"})
+	})
 
 	strict := gen.NewStrictHandlerWithOptions(s, nil, gen.StrictHTTPServerOptions{
 		// Body could not be decoded (bad JSON, wrong types).
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				s.writeError(w, r, &apperr.Error{Status: http.StatusRequestEntityTooLarge, Code: "REQUEST_TOO_LARGE", Message: "request body exceeds 1 MiB"})
+				return
+			}
 			s.writeError(w, r, apperr.Validation("malformed request body"))
 		},
 		// A handler returned an error.
@@ -75,7 +85,12 @@ type errorBody struct {
 // logged with the request id and reported as a generic 500, so internals never leak.
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var ae *apperr.Error
-	if !errors.As(err, &ae) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "22021" {
+		// character_not_in_repertoire: Postgres refuses NUL bytes in text. That is bad
+		// client input, so report it as such rather than as a server failure.
+		ae = apperr.Validation("text fields must not contain NUL characters")
+	} else if !errors.As(err, &ae) {
 		s.Log.ErrorContext(r.Context(), "internal error",
 			"err", err, "request_id", middleware.GetReqID(r.Context()), "path", r.URL.Path)
 		ae = &apperr.Error{Status: http.StatusInternalServerError, Code: "INTERNAL", Message: "internal error"}

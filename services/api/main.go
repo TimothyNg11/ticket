@@ -76,7 +76,11 @@ func serve(log *slog.Logger) error {
 			Inventory: inventory.New(pool),
 			Log:       log,
 		}),
-		ReadHeaderTimeout: 5 * time.Second, // slowloris protection
+		// Bound every phase of a connection so slow or idle clients can't pin goroutines.
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	errc := make(chan error, 1)

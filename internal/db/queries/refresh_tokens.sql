@@ -10,8 +10,10 @@ SELECT * FROM refresh_tokens WHERE token_hash = $1 FOR UPDATE;
 -- name: RevokeRefreshToken :exec
 UPDATE refresh_tokens SET revoked_at = now(), replaced_by = $2 WHERE id = $1;
 
--- name: RevokeRefreshTokenByHash :exec
-UPDATE refresh_tokens SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL;
+-- name: RevokeRefreshTokenFamilyByHash :exec
+UPDATE refresh_tokens SET revoked_at = now()
+WHERE revoked_at IS NULL
+  AND family_id = (SELECT family_id FROM refresh_tokens t WHERE t.token_hash = $1);
 
 -- name: RevokeRefreshTokenFamily :exec
 UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL;

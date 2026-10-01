@@ -81,20 +81,22 @@ func (q *Queries) RevokeRefreshToken(ctx context.Context, arg RevokeRefreshToken
 	return err
 }
 
-const revokeRefreshTokenByHash = `-- name: RevokeRefreshTokenByHash :exec
-UPDATE refresh_tokens SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL
-`
-
-func (q *Queries) RevokeRefreshTokenByHash(ctx context.Context, tokenHash string) error {
-	_, err := q.db.Exec(ctx, revokeRefreshTokenByHash, tokenHash)
-	return err
-}
-
 const revokeRefreshTokenFamily = `-- name: RevokeRefreshTokenFamily :exec
 UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL
 `
 
 func (q *Queries) RevokeRefreshTokenFamily(ctx context.Context, familyID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, revokeRefreshTokenFamily, familyID)
+	return err
+}
+
+const revokeRefreshTokenFamilyByHash = `-- name: RevokeRefreshTokenFamilyByHash :exec
+UPDATE refresh_tokens SET revoked_at = now()
+WHERE revoked_at IS NULL
+  AND family_id = (SELECT family_id FROM refresh_tokens t WHERE t.token_hash = $1)
+`
+
+func (q *Queries) RevokeRefreshTokenFamilyByHash(ctx context.Context, tokenHash string) error {
+	_, err := q.db.Exec(ctx, revokeRefreshTokenFamilyByHash, tokenHash)
 	return err
 }

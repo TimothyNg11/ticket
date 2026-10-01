@@ -153,8 +153,9 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (Tokens, err
 	return out, nil
 }
 
-// Logout revokes the refresh token. It succeeds even if the token is unknown or
-// already revoked, so clients can retry it safely.
+// Logout ends the session the refresh token belongs to by revoking its whole family,
+// so logging out with a stale (already rotated) token still logs the session out.
+// It succeeds even if the token is unknown, so clients can retry it safely.
 func (s *Service) Logout(ctx context.Context, refreshToken string) error {
-	return sqlc.New(s.pool).RevokeRefreshTokenByHash(ctx, auth.HashRefreshToken(refreshToken))
+	return sqlc.New(s.pool).RevokeRefreshTokenFamilyByHash(ctx, auth.HashRefreshToken(refreshToken))
 }

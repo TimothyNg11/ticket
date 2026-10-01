@@ -144,3 +144,19 @@ func TestLogoutRevokes(t *testing.T) {
 	_, err = s.Refresh(ctx, toks.Refresh)
 	assert.Error(t, err)
 }
+
+// Logging out with a stale (already rotated) token must still end the session.
+func TestLogoutWithStaleTokenEndsSession(t *testing.T) {
+	s := newService(t)
+	ctx := context.Background()
+	_, err := s.Register(ctx, "alice@example.com", pw)
+	require.NoError(t, err)
+	first, err := s.Login(ctx, "alice@example.com", pw)
+	require.NoError(t, err)
+	second, err := s.Refresh(ctx, first.Refresh)
+	require.NoError(t, err)
+
+	require.NoError(t, s.Logout(ctx, first.Refresh))
+	_, err = s.Refresh(ctx, second.Refresh)
+	assert.Error(t, err, "the newer token in the same session must be revoked too")
+}
