@@ -73,10 +73,16 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | --- | --- |
 | `api/openapi.yaml` | API contract (source of truth for HTTP types) |
 | `services/api` | API binary: `serve`, `migrate`, `healthcheck` |
+| `services/workers` | Background jobs (`sweeper`, …) |
+| `services/payments_mock` | Fake payment provider with injectable latency and failures |
+| `Dockerfile` | One image recipe for every service (`--build-arg SERVICE=…`) |
 | `internal/db` | Migrations (embedded), sqlc queries, transaction helpers |
 | `internal/auth` | Argon2id passwords, JWT access tokens, refresh tokens |
 | `internal/account` | Register, login, refresh-token rotation |
 | `internal/inventory` | Venues, events, seat maps |
+| `internal/booking` | Holds, checkout, orders, cancellation, hold expiry, invariant checks |
+| `internal/payments` | Payment client; `mock/` is the fake provider |
+| `internal/idempotency` | Idempotency-Key middleware |
 | `internal/httpapi` | Router, middleware, handlers |
 | `internal/testutil` | Postgres test harness |
 | `deploy/compose` | Local Docker Compose stack |
@@ -87,7 +93,7 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | Phase | | Status |
 | --- | --- | --- |
 | 1 | Foundation: auth, venues, events, seat maps, Compose | Done |
-| 2 | Holds and checkout | Pending |
+| 2 | Holds, checkout, mock payments, idempotency keys, expiry sweeper | Done |
 | 3 | CI | Pending |
 | 4 | Caching and rate limiting | Pending |
 | 5 | Waiting room | Pending |

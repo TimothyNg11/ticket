@@ -2,9 +2,10 @@
 // translate between the generated OpenAPI types and the domain services.
 package httpapi
 
-//go:generate go tool oapi-codegen -config ../../api/oapi-codegen.yaml ../../api/openapi.yaml
+//go:generate go tool oapi-codegen -config ../../api/oapi-codegen.yaml -o gen/api.gen.go ../../api/openapi.yaml
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -13,13 +14,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"ticket/internal/account"
 	"ticket/internal/apperr"
 	"ticket/internal/auth"
+	"ticket/internal/booking"
 	"ticket/internal/httpapi/gen"
+	"ticket/internal/idempotency"
 	"ticket/internal/inventory"
 )
 
@@ -29,6 +33,7 @@ type Deps struct {
 	Tokens    *auth.TokenIssuer
 	Accounts  *account.Service
 	Inventory *inventory.Service
+	Booking   *booking.Service
 	Log       *slog.Logger
 }
 
@@ -45,7 +50,11 @@ func NewHandler(d Deps) http.Handler {
 	s := &Server{Deps: d, validate: validator.New(validator.WithRequiredStructEnabled())}
 
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, s.recoverer, limitBody, s.authenticate)
+	idem := idempotency.New(d.Pool, func(ctx context.Context) (uuid.UUID, bool) {
+		c, ok := userFrom(ctx)
+		return c.UserID, ok
+	}, s.writeError, d.Log)
+	r.Use(middleware.RequestID, s.recoverer, limitBody, s.authenticate, idem.Handler)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) { s.writeError(w, r, apperr.NotFound("route")) })
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, &apperr.Error{Status: http.StatusMethodNotAllowed, Code: "METHOD_NOT_ALLOWED", Message: "method not allowed"})

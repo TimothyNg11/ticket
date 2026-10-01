@@ -2,11 +2,15 @@
 #   docker compose --env-file .env -f deploy/compose/docker-compose.yml up --build
 name: ticket
 
+x-db-url: &db-url postgres://ticket:${POSTGRES_PASSWORD}@postgres:5432/ticket?sslmode=disable
+
 x-api-image: &api-image
   image: ticket/api:dev
-  build:
-    context: ../..
-    dockerfile: services/api/Dockerfile
+  build: { context: ../.., args: { SERVICE: api } }
+
+x-workers-image: &workers-image
+  image: ticket/workers:dev
+  build: { context: ../.., args: { SERVICE: workers } }
 
 services:
   postgres:
@@ -23,22 +27,49 @@ services:
       timeout: 3s
       retries: 30
 
-  # Runs migrations once and exits; the API starts only after it succeeds.
+  # Runs migrations once and exits; everything else starts after it succeeds.
   migrate:
     <<: *api-image
     command: ["migrate"]
     environment:
-      DATABASE_URL: postgres://ticket:${POSTGRES_PASSWORD}@postgres:5432/ticket?sslmode=disable
+      DATABASE_URL: *db-url
     depends_on:
       postgres: { condition: service_healthy }
+
+  payments:
+    image: ticket/payments-mock:dev
+    build: { context: ../.., args: { SERVICE: payments_mock } }
+    environment:
+      DECLINE_RATE: ${PAYMENTS_DECLINE_RATE:-0}
+      ERROR_RATE: ${PAYMENTS_ERROR_RATE:-0}
+      LATENCY_MS: ${PAYMENTS_LATENCY_MS:-50}
+    ports: ["8081:8081"]
 
   api:
     <<: *api-image
     environment:
-      DATABASE_URL: postgres://ticket:${POSTGRES_PASSWORD}@postgres:5432/ticket?sslmode=disable
+      DATABASE_URL: *db-url
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      TICKET_SIGNING_KEY: ${TICKET_SIGNING_KEY:?set TICKET_SIGNING_KEY in .env}
+      PAYMENTS_URL: http://payments:8081
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      HOLD_TTL: ${HOLD_TTL:-10m}
     ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD", "/app", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      payments: { condition: service_started }
+
+  sweeper:
+    <<: *workers-image
+    command: ["sweeper"]
+    environment:
+      DATABASE_URL: *db-url
+      SWEEP_INTERVAL: 15s
     depends_on:
       migrate: { condition: service_completed_successfully }
 

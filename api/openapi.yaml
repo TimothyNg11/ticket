@@ -68,6 +68,64 @@ paths:
       responses:
         "200": { description: Seat map, content: { application/json: { schema: { $ref: "#/components/schemas/SeatMap" } } } }
         default: { $ref: "#/components/responses/Error" }
+  /v1/events/{id}/holds:
+    post:
+      operationId: createHold
+      summary: Hold 1 to 8 seats for 10 minutes.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CreateHoldRequest" } } } }
+      responses:
+        "201": { description: Held, content: { application/json: { schema: { $ref: "#/components/schemas/Hold" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/holds/{id}:
+    delete:
+      operationId: releaseHold
+      summary: Release a hold you own.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "204": { description: Released }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/holds/{id}/checkout:
+    post:
+      operationId: checkout
+      summary: Create an order for a hold and charge for it.
+      description: >
+        201 with a confirmed order on success. 202 with a pending_payment order when the payment
+        provider's answer is unknown (timeout or provider error); poll GET /v1/orders/{id}.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "201": { description: Confirmed, content: { application/json: { schema: { $ref: "#/components/schemas/Order" } } } }
+        "202": { description: Payment outcome pending, content: { application/json: { schema: { $ref: "#/components/schemas/Order" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/orders:
+    get:
+      operationId: listOrders
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200": { description: Your orders, newest first, content: { application/json: { schema: { $ref: "#/components/schemas/OrderList" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/orders/{id}:
+    get:
+      operationId: getOrder
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200": { description: Order, content: { application/json: { schema: { $ref: "#/components/schemas/Order" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/orders/{id}/cancel:
+    post:
+      operationId: cancelOrder
+      summary: Cancel a confirmed order before the event and refund it.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "200": { description: Cancelled (status refunded, or cancelled while the refund is retried), content: { application/json: { schema: { $ref: "#/components/schemas/Order" } } } }
+        default: { $ref: "#/components/responses/Error" }
   /v1/admin/venues:
     post:
       operationId: adminCreateVenue
@@ -97,6 +155,12 @@ components:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   parameters:
     ID: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-chosen key (1-64 chars). Retrying with the same key returns the stored response instead of repeating the action.
+      schema: { type: string, minLength: 1, maxLength: 64 }
   responses:
     Error:
       description: Error
@@ -247,3 +311,47 @@ components:
       properties:
         section_id: { type: string, format: uuid, x-oapi-codegen-extra-tags: { validate: "required" } }
         price_cents: { type: integer, x-oapi-codegen-extra-tags: { validate: "min=1,max=10000000" } }
+    CreateHoldRequest:
+      type: object
+      required: [seat_ids]
+      properties:
+        seat_ids:
+          type: array
+          description: event_seat ids from the seat map.
+          items: { type: string, format: uuid }
+          minItems: 1
+          maxItems: 8
+          x-oapi-codegen-extra-tags: { validate: "required,min=1,max=8,unique" }
+    Hold:
+      type: object
+      required: [id, event_id, seat_ids, expires_at, status]
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        seat_ids: { type: array, items: { type: string, format: uuid } }
+        expires_at: { type: string, format: date-time }
+        status: { type: string, description: "active, converted, expired, or released" }
+    Order:
+      type: object
+      required: [id, event_id, hold_id, status, total_cents, created_at, tickets]
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        hold_id: { type: string, format: uuid }
+        status: { type: string, description: "pending_payment, confirmed, failed, cancelled, or refunded" }
+        total_cents: { type: integer }
+        created_at: { type: string, format: date-time }
+        tickets: { type: array, items: { $ref: "#/components/schemas/Ticket" } }
+    OrderList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Order" } }
+    Ticket:
+      type: object
+      required: [id, event_seat_id, status, qr_token]
+      properties:
+        id: { type: string, format: uuid }
+        event_seat_id: { type: string, format: uuid }
+        status: { type: string, description: "valid or void" }
+        qr_token: { type: string, description: HMAC-signed payload to render as a QR code }
