@@ -167,7 +167,7 @@ func do(method, path, token string, body any) (int, []byte, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	return resp.StatusCode, raw, err
 }

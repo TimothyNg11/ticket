@@ -112,7 +112,7 @@ func (s *Service) ExpireHolds(ctx context.Context, batch int) (int, error) {
 	var n int
 	var events map[uuid.UUID]bool
 	err := db.InTx(ctx, s.pool, func(q *sqlc.Queries) error {
-		ids, err := q.LockExpiredHolds(ctx, int32(batch))
+		ids, err := q.LockExpiredHolds(ctx, int32(min(batch, 10_000))) //nolint:gosec // clamped above
 		if err != nil || len(ids) == 0 {
 			return err
 		}

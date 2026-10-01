@@ -135,13 +135,14 @@ func (s *Service) GetEvent(ctx context.Context, id uuid.UUID) (sqlc.Event, error
 // ListEvents returns up to limit published events after cursor, ordered by start
 // time, and the cursor for the next page ("" on the last page).
 func (s *Service) ListEvents(ctx context.Context, cursor string, limit int) ([]sqlc.Event, string, error) {
+	limit = min(max(limit, 1), 100)
 	afterTS, afterID, err := decodeCursor(cursor)
 	if err != nil {
 		return nil, "", err
 	}
 	// Fetch one extra row to learn whether another page exists.
 	rows, err := sqlc.New(s.pool).ListPublicEvents(ctx, sqlc.ListPublicEventsParams{
-		AfterStartsAt: afterTS, AfterID: afterID, PageSize: int32(limit + 1),
+		AfterStartsAt: afterTS, AfterID: afterID, PageSize: int32(limit + 1), //nolint:gosec // clamped to 1..100 above
 	})
 	if err != nil {
 		return nil, "", err

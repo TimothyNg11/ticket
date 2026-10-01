@@ -161,7 +161,7 @@ func (g *Guard) Handler(next http.Handler) http.Handler {
 			err = q.DeleteIdempotencyKey(saveCtx, sqlc.DeleteIdempotencyKeyParams{UserID: user, Key: key})
 		} else {
 			err = q.SaveIdempotentResponse(saveCtx, sqlc.SaveIdempotentResponseParams{
-				UserID: user, Key: key, ResponseStatus: ptr(int32(rec.status)), ResponseBody: rec.body.Bytes(),
+				UserID: user, Key: key, ResponseStatus: ptr(statusCode(rec.status)), ResponseBody: rec.body.Bytes(),
 			})
 		}
 		if err != nil {
@@ -197,3 +197,6 @@ func (r *recorder) Write(b []byte) (int, error) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// statusCode narrows an HTTP status (always 100..999) to the column type.
+func statusCode(s int) int32 { return int32(s) } //nolint:gosec // HTTP status codes are < 1000
