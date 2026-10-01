@@ -26,7 +26,9 @@ func Unauthenticated(msg string) *Error {
 func Forbidden() *Error { return &Error{http.StatusForbidden, "FORBIDDEN", "not allowed"} }
 
 // NotFound reports a missing resource (404).
-func NotFound(what string) *Error { return &Error{http.StatusNotFound, "NOT_FOUND", what + " not found"} }
+func NotFound(what string) *Error {
+	return &Error{http.StatusNotFound, "NOT_FOUND", what + " not found"}
+}
 
 // Conflict reports a state conflict such as a duplicate (409).
 func Conflict(code, msg string) *Error { return &Error{http.StatusConflict, code, msg} }

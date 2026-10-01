@@ -1,0 +1,98 @@
+# ticket
+
+A Ticketmaster-style backend built to survive a flash sale: 50,000 users trying to buy 5,000 seats in the same minute, with **zero seats ever sold twice**. Every component exists to exercise a core backend concept: relational modeling and transactions, caching, rate limiting, queues, containers, Kubernetes, CI/CD, security, reliability under failure, observability, and load testing.
+
+- Design spec: [`docs/superpowers/specs/2026-10-01-ticketing-system-design.md`](docs/superpowers/specs/2026-10-01-ticketing-system-design.md)
+- How each phase works, in plain language: [`docs/LEARNING.md`](docs/LEARNING.md)
+- Decisions and their tradeoffs: [`docs/decisions/`](docs/decisions/)
+- Load-test results: [`BENCHMARKS.md`](BENCHMARKS.md)
+
+## Architecture
+
+```mermaid
+flowchart LR
+    C[Clients / k6 bots] --> I[Ingress]
+    I --> A[API pods]
+    A --> PB[PgBouncer] --> PG[(Postgres)]
+    A --> R[(Redis)]
+    A --> P[Mock payments]
+    subgraph Workers
+      Q[Queue admitter]
+      S[Hold sweeper]
+      O[Outbox relay]
+      RC[Reconciler]
+    end
+    Q --> R
+    S --> PB
+    O --> PB
+    O --> R
+    RC --> PB
+    RC --> P
+```
+
+Postgres is the only authority on who owns a seat; constraints in the schema make double-selling impossible even if application code is wrong. Redis absorbs reads and enforces fairness. Workers handle everything time-based or asynchronous.
+
+## Run locally
+
+Requires Docker and Go 1.27.
+
+```bash
+cp .env.example .env        # then replace every value
+docker compose --env-file .env -f deploy/compose/docker-compose.yml up --build
+```
+
+The API listens on `http://localhost:8080`. The OpenAPI contract is [`api/openapi.yaml`](api/openapi.yaml). Emails listed in `ADMIN_EMAILS` become admins when they register.
+
+Check the whole flow end to end against the running stack:
+
+```bash
+go run ./tools/smoke        # prints SMOKE OK
+```
+
+## Run tests
+
+```bash
+go test ./...               # unit + integration; needs Docker running (Testcontainers)
+go test -short ./...        # unit tests only, no Docker
+```
+
+Integration tests start one Postgres container per package and give every test its own freshly migrated database (cloned from a template), so tests are isolated and fast.
+
+## Regenerate code
+
+Generated code is committed so `go build` works without extra tools.
+
+```bash
+go generate ./internal/httpapi                                              # OpenAPI → internal/httpapi/gen
+docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQL → internal/db/sqlc
+```
+
+## Layout
+
+| Path | What |
+| --- | --- |
+| `api/openapi.yaml` | API contract (source of truth for HTTP types) |
+| `services/api` | API binary: `serve`, `migrate`, `healthcheck` |
+| `internal/db` | Migrations (embedded), sqlc queries, transaction helpers |
+| `internal/auth` | Argon2id passwords, JWT access tokens, refresh tokens |
+| `internal/account` | Register, login, refresh-token rotation |
+| `internal/inventory` | Venues, events, seat maps |
+| `internal/httpapi` | Router, middleware, handlers |
+| `internal/testutil` | Postgres test harness |
+| `deploy/compose` | Local Docker Compose stack |
+| `tools/smoke` | End-to-end smoke check |
+
+## Status
+
+| Phase | | Status |
+| --- | --- | --- |
+| 1 | Foundation: auth, venues, events, seat maps, Compose | Done |
+| 2 | Holds and checkout | Pending |
+| 3 | CI | Pending |
+| 4 | Caching and rate limiting | Pending |
+| 5 | Waiting room | Pending |
+| 6 | Reliability | Pending |
+| 7 | Kubernetes | Pending |
+| 8 | Observability | Pending |
+| 9 | Load and chaos testing | Pending |
+| 10 | Delivery (GitOps) | Pending |
