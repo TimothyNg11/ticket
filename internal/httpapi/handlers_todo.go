@@ -12,9 +12,6 @@ import (
 
 var errTODO = apperr.Unavailable("not implemented")
 
-func (s *Server) AdminCreateVenue(context.Context, gen.AdminCreateVenueRequestObject) (gen.AdminCreateVenueResponseObject, error) {
-	return nil, errTODO
-}
 func (s *Server) AdminCreateEvent(context.Context, gen.AdminCreateEventRequestObject) (gen.AdminCreateEventResponseObject, error) {
 	return nil, errTODO
 }

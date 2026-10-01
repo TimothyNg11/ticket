@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
@@ -119,4 +120,16 @@ func (p *PG) URL(t *testing.T, pool *pgxpool.Pool) string {
 		t.Fatal("pool was not created by NewDB")
 	}
 	return u.(string)
+}
+
+// CreateUser inserts a user directly (bypassing password hashing) and returns its id.
+func CreateUser(t *testing.T, pool *pgxpool.Pool, email, role string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	err := pool.QueryRow(context.Background(),
+		"INSERT INTO users (email, password_hash, role) VALUES ($1, 'x', $2) RETURNING id", email, role).Scan(&id)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	return id
 }
