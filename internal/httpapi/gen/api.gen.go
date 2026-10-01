@@ -34,6 +34,12 @@ type CreateEventRequest struct {
 	VenueId       openapi_types.UUID `json:"venue_id" validate:"required"`
 }
 
+// CreateHoldRequest defines model for CreateHoldRequest.
+type CreateHoldRequest struct {
+	// SeatIds event_seat ids from the seat map.
+	SeatIds []openapi_types.UUID `json:"seat_ids" validate:"required,min=1,max=8,unique"`
+}
+
 // CreateVenueRequest defines model for CreateVenueRequest.
 type CreateVenueRequest struct {
 	Name     string        `json:"name" validate:"required,max=200"`
@@ -75,6 +81,17 @@ type EventPage struct {
 
 // Health defines model for Health.
 type Health struct {
+	Status string `json:"status"`
+}
+
+// Hold defines model for Hold.
+type Hold struct {
+	EventId   openapi_types.UUID   `json:"event_id"`
+	ExpiresAt time.Time            `json:"expires_at"`
+	Id        openapi_types.UUID   `json:"id"`
+	SeatIds   []openapi_types.UUID `json:"seat_ids"`
+
+	// Status active, converted, expired, or released
 	Status string `json:"status"`
 }
 
@@ -177,10 +194,25 @@ type VenueSection struct {
 // ID defines model for ID.
 type ID = openapi_types.UUID
 
+// IdempotencyKey defines model for IdempotencyKey.
+type IdempotencyKey = string
+
 // ListEventsParams defines parameters for ListEvents.
 type ListEventsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// CreateHoldParams defines parameters for CreateHold.
+type CreateHoldParams struct {
+	// IdempotencyKey Client-chosen key (1-64 chars). Retrying with the same key returns the stored response instead of repeating the action.
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ReleaseHoldParams defines parameters for ReleaseHold.
+type ReleaseHoldParams struct {
+	// IdempotencyKey Client-chosen key (1-64 chars). Retrying with the same key returns the stored response instead of repeating the action.
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
 // AdminCreateEventJSONRequestBody defines body for AdminCreateEvent for application/json ContentType.
@@ -200,6 +232,9 @@ type RefreshTokensJSONRequestBody = RefreshRequest
 
 // RegisterJSONRequestBody defines body for Register for application/json ContentType.
 type RegisterJSONRequestBody = RegisterRequest
+
+// CreateHoldJSONRequestBody defines body for CreateHold for application/json ContentType.
+type CreateHoldJSONRequestBody = CreateHoldRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -236,9 +271,15 @@ type ServerInterface interface {
 
 	// (GET /v1/events/{id})
 	GetEvent(w http.ResponseWriter, r *http.Request, id ID)
+	// CreateHold Hold 1 to 8 seats for 10 minutes.
+	// (POST /v1/events/{id}/holds)
+	CreateHold(w http.ResponseWriter, r *http.Request, id ID, params CreateHoldParams)
 
 	// (GET /v1/events/{id}/seatmap)
 	GetSeatMap(w http.ResponseWriter, r *http.Request, id ID)
+	// ReleaseHold Release a hold you own.
+	// (DELETE /v1/holds/{id})
+	ReleaseHold(w http.ResponseWriter, r *http.Request, id ID, params ReleaseHoldParams)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -302,8 +343,20 @@ func (_ Unimplemented) GetEvent(w http.ResponseWriter, r *http.Request, id ID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// CreateHold Hold 1 to 8 seats for 10 minutes.
+// (POST /v1/events/{id}/holds)
+func (_ Unimplemented) CreateHold(w http.ResponseWriter, r *http.Request, id ID, params CreateHoldParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /v1/events/{id}/seatmap)
 func (_ Unimplemented) GetSeatMap(w http.ResponseWriter, r *http.Request, id ID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ReleaseHold Release a hold you own.
+// (DELETE /v1/holds/{id})
+func (_ Unimplemented) ReleaseHold(w http.ResponseWriter, r *http.Request, id ID, params ReleaseHoldParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -526,6 +579,60 @@ func (siw *ServerInterfaceWrapper) GetEvent(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// CreateHold operation middleware
+func (siw *ServerInterfaceWrapper) CreateHold(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateHoldParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateHold(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSeatMap operation middleware
 func (siw *ServerInterfaceWrapper) GetSeatMap(w http.ResponseWriter, r *http.Request) {
 
@@ -543,6 +650,60 @@ func (siw *ServerInterfaceWrapper) GetSeatMap(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetSeatMap(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReleaseHold operation middleware
+func (siw *ServerInterfaceWrapper) ReleaseHold(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReleaseHoldParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReleaseHold(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -691,6 +852,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/v1/events/{id}/seatmap", wrapper.GetSeatMap)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/events/{id}/holds", wrapper.CreateHold)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/v1/holds/{id}", wrapper.ReleaseHold)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/v1/admin/venues", wrapper.AdminCreateVenue)
@@ -1111,6 +1278,47 @@ func (response GetEventdefaultJSONResponse) VisitGetEventResponse(w http.Respons
 	return err
 }
 
+type CreateHoldRequestObject struct {
+	Id     ID `json:"id"`
+	Params CreateHoldParams
+	Body   *CreateHoldJSONRequestBody
+}
+
+type CreateHoldResponseObject interface {
+	VisitCreateHoldResponse(w http.ResponseWriter) error
+}
+
+type CreateHold201JSONResponse Hold
+
+func (response CreateHold201JSONResponse) VisitCreateHoldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateHolddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CreateHolddefaultJSONResponse) VisitCreateHoldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetSeatMapRequestObject struct {
 	Id ID `json:"id"`
 }
@@ -1139,6 +1347,40 @@ type GetSeatMapdefaultJSONResponse struct {
 }
 
 func (response GetSeatMapdefaultJSONResponse) VisitGetSeatMapResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReleaseHoldRequestObject struct {
+	Id     ID `json:"id"`
+	Params ReleaseHoldParams
+}
+
+type ReleaseHoldResponseObject interface {
+	VisitReleaseHoldResponse(w http.ResponseWriter) error
+}
+
+type ReleaseHold204Response struct {
+}
+
+func (response ReleaseHold204Response) VisitReleaseHoldResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ReleaseHolddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ReleaseHolddefaultJSONResponse) VisitReleaseHoldResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -1185,9 +1427,15 @@ type StrictServerInterface interface {
 
 	// (GET /v1/events/{id})
 	GetEvent(ctx context.Context, request GetEventRequestObject) (GetEventResponseObject, error)
+	// CreateHold Hold 1 to 8 seats for 10 minutes.
+	// (POST /v1/events/{id}/holds)
+	CreateHold(ctx context.Context, request CreateHoldRequestObject) (CreateHoldResponseObject, error)
 
 	// (GET /v1/events/{id}/seatmap)
 	GetSeatMap(ctx context.Context, request GetSeatMapRequestObject) (GetSeatMapResponseObject, error)
+	// ReleaseHold Release a hold you own.
+	// (DELETE /v1/holds/{id})
+	ReleaseHold(ctx context.Context, request ReleaseHoldRequestObject) (ReleaseHoldResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -1541,6 +1789,40 @@ func (sh *strictHandler) GetEvent(w http.ResponseWriter, r *http.Request, id ID)
 	}
 }
 
+// CreateHold operation middleware
+func (sh *strictHandler) CreateHold(w http.ResponseWriter, r *http.Request, id ID, params CreateHoldParams) {
+	var request CreateHoldRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	var body CreateHoldJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateHold(ctx, request.(CreateHoldRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateHold")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateHoldResponseObject); ok {
+		if err := validResponse.VisitCreateHoldResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetSeatMap operation middleware
 func (sh *strictHandler) GetSeatMap(w http.ResponseWriter, r *http.Request, id ID) {
 	var request GetSeatMapRequestObject
@@ -1567,40 +1849,73 @@ func (sh *strictHandler) GetSeatMap(w http.ResponseWriter, r *http.Request, id I
 	}
 }
 
+// ReleaseHold operation middleware
+func (sh *strictHandler) ReleaseHold(w http.ResponseWriter, r *http.Request, id ID, params ReleaseHoldParams) {
+	var request ReleaseHoldRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReleaseHold(ctx, request.(ReleaseHoldRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReleaseHold")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReleaseHoldResponseObject); ok {
+		if err := validResponse.VisitReleaseHoldResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"+HjhxFFXyCGMWLjIQuZEPoguwvi/AQA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -2,7 +2,7 @@
 // translate between the generated OpenAPI types and the domain services.
 package httpapi
 
-//go:generate go tool oapi-codegen -config ../../api/oapi-codegen.yaml ../../api/openapi.yaml
+//go:generate go tool oapi-codegen -config ../../api/oapi-codegen.yaml -o gen/api.gen.go ../../api/openapi.yaml
 
 import (
 	"encoding/json"

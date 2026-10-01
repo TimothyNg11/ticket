@@ -90,3 +90,6 @@ ON CONFLICT (idempotency_key) DO NOTHING;
 
 -- name: GetChargeRef :one
 SELECT provider_ref FROM payments WHERE order_id = $1 AND kind = 'charge' AND status = 'succeeded';
+
+-- name: EventsOfHolds :many
+SELECT DISTINCT event_id FROM holds WHERE id = ANY(sqlc.arg(ids)::uuid[]);

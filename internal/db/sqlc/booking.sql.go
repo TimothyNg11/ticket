@@ -129,6 +129,30 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) (Tic
 	return i, err
 }
 
+const eventsOfHolds = `-- name: EventsOfHolds :many
+SELECT DISTINCT event_id FROM holds WHERE id = ANY($1::uuid[])
+`
+
+func (q *Queries) EventsOfHolds(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, eventsOfHolds, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var event_id uuid.UUID
+		if err := rows.Scan(&event_id); err != nil {
+			return nil, err
+		}
+		items = append(items, event_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expireHolds = `-- name: ExpireHolds :exec
 UPDATE holds SET status = 'expired' WHERE id = ANY($1::uuid[])
 `
