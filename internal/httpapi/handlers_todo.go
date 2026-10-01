@@ -12,18 +12,6 @@ import (
 
 var errTODO = apperr.Unavailable("not implemented")
 
-func (s *Server) Register(context.Context, gen.RegisterRequestObject) (gen.RegisterResponseObject, error) {
-	return nil, errTODO
-}
-func (s *Server) Login(context.Context, gen.LoginRequestObject) (gen.LoginResponseObject, error) {
-	return nil, errTODO
-}
-func (s *Server) RefreshTokens(context.Context, gen.RefreshTokensRequestObject) (gen.RefreshTokensResponseObject, error) {
-	return nil, errTODO
-}
-func (s *Server) Logout(context.Context, gen.LogoutRequestObject) (gen.LogoutResponseObject, error) {
-	return nil, errTODO
-}
 func (s *Server) AdminCreateVenue(context.Context, gen.AdminCreateVenueRequestObject) (gen.AdminCreateVenueResponseObject, error) {
 	return nil, errTODO
 }
