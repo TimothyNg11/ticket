@@ -152,7 +152,7 @@ func (s *Service) ApplyChargeResult(ctx context.Context, orderID uuid.UUID, res 
 		return Order{}, err
 	}
 	if sold {
-		s.onChange(eventID)
+		s.onChange(eventID, 0) // held -> sold: availability unchanged, but the seat map changed
 	}
 	return s.loadOrder(ctx, orderID)
 }

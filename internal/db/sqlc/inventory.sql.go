@@ -12,6 +12,17 @@ import (
 	"github.com/google/uuid"
 )
 
+const countAvailableSeats = `-- name: CountAvailableSeats :one
+SELECT count(*) FROM event_seats WHERE event_id = $1 AND state = 'available'
+`
+
+func (q *Queries) CountAvailableSeats(ctx context.Context, eventID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countAvailableSeats, eventID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createEvent = `-- name: CreateEvent :one
 INSERT INTO events (venue_id, name, starts_at, on_sale_at) VALUES ($1, $2, $3, $4) RETURNING id, venue_id, name, starts_at, on_sale_at, status, created_at
 `
@@ -187,6 +198,30 @@ func (q *Queries) GetVenue(ctx context.Context, id uuid.UUID) (Venue, error) {
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listOnSaleEventIDs = `-- name: ListOnSaleEventIDs :many
+SELECT id FROM events WHERE status = 'on_sale' AND starts_at > now()
+`
+
+func (q *Queries) ListOnSaleEventIDs(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listOnSaleEventIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listPublicEvents = `-- name: ListPublicEvents :many

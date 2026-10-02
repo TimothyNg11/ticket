@@ -52,7 +52,7 @@ func (s *Service) CreateHold(ctx context.Context, userID, eventID uuid.UUID, sea
 		return nil
 	})
 	if err == nil {
-		s.onChange(eventID)
+		s.onChange(eventID, -len(out.SeatIDs))
 	}
 	return out, err
 }
@@ -75,6 +75,7 @@ func seatsUnavailable(requested, locked []uuid.UUID) error {
 // while a payment for it is in flight.
 func (s *Service) ReleaseHold(ctx context.Context, userID, holdID uuid.UUID) error {
 	var eventID uuid.UUID
+	var released int64
 	err := db.InTx(ctx, s.pool, func(q *sqlc.Queries) error {
 		h, err := q.GetHoldForUpdate(ctx, holdID)
 		if isNoRows(err) || (err == nil && h.UserID != userID) {
@@ -93,14 +94,14 @@ func (s *Service) ReleaseHold(ctx context.Context, userID, holdID uuid.UUID) err
 		if pending {
 			return errInCheckout
 		}
-		if _, err := q.ReleaseHoldSeats(ctx, &holdID); err != nil {
+		if released, err = q.ReleaseHoldSeats(ctx, &holdID); err != nil {
 			return err
 		}
 		eventID = h.EventID
 		return q.SetHoldStatus(ctx, sqlc.SetHoldStatusParams{ID: holdID, Status: "released"})
 	})
 	if err == nil {
-		s.onChange(eventID)
+		s.onChange(eventID, int(released))
 	}
 	return err
 }
@@ -110,36 +111,27 @@ func (s *Service) ReleaseHold(ctx context.Context, userID, holdID uuid.UUID) err
 // replica a different set of holds.
 func (s *Service) ExpireHolds(ctx context.Context, batch int) (int, error) {
 	var n int
-	var events map[uuid.UUID]bool
+	freed := map[uuid.UUID]int{} // seats released per event
 	err := db.InTx(ctx, s.pool, func(q *sqlc.Queries) error {
-		ids, err := q.LockExpiredHolds(ctx, int32(min(batch, 10_000))) //nolint:gosec // clamped above
+		ids, err := q.LockExpiredHolds(ctx, int32(min(batch, 10_000))) //nolint:gosec // clamped
 		if err != nil || len(ids) == 0 {
 			return err
 		}
-		if _, err := q.ReleaseSeatsOfHolds(ctx, ids); err != nil {
+		events, err := q.ReleaseSeatsOfHolds(ctx, ids)
+		if err != nil {
 			return err
 		}
-		if err := q.ExpireHolds(ctx, ids); err != nil {
-			return err
+		for _, e := range events {
+			freed[e]++
 		}
-		events, err = eventsOfHolds(ctx, q, ids)
 		n = len(ids)
-		return err
+		return q.ExpireHolds(ctx, ids)
 	})
-	for id := range events {
-		s.onChange(id)
-	}
-	return n, err
-}
-
-func eventsOfHolds(ctx context.Context, q *sqlc.Queries, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
-	evs, err := q.EventsOfHolds(ctx, ids)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	out := map[uuid.UUID]bool{}
-	for _, e := range evs {
-		out[e] = true
+	for id, seats := range freed {
+		s.onChange(id, seats)
 	}
-	return out, nil
+	return n, nil
 }

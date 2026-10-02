@@ -22,9 +22,11 @@ import (
 	"ticket/internal/apperr"
 	"ticket/internal/auth"
 	"ticket/internal/booking"
+	"ticket/internal/cache"
 	"ticket/internal/httpapi/gen"
 	"ticket/internal/idempotency"
 	"ticket/internal/inventory"
+	"ticket/internal/ratelimit"
 )
 
 // Deps are the collaborators the HTTP layer needs.
@@ -34,7 +36,12 @@ type Deps struct {
 	Accounts  *account.Service
 	Inventory *inventory.Service
 	Booking   *booking.Service
-	Log       *slog.Logger
+	Cache     *cache.Cache
+	Limiter   *ratelimit.Limiter // nil disables rate limiting
+	// TrustProxy reads the client IP from X-Forwarded-For (set it only behind a
+	// proxy that overwrites that header, like the ingress).
+	TrustProxy bool
+	Log        *slog.Logger
 }
 
 // Server implements gen.StrictServerInterface.
@@ -54,7 +61,7 @@ func NewHandler(d Deps) http.Handler {
 		c, ok := userFrom(ctx)
 		return c.UserID, ok
 	}, s.writeError, d.Log)
-	r.Use(middleware.RequestID, s.recoverer, limitBody, s.authenticate, idem.Handler)
+	r.Use(middleware.RequestID, s.recoverer, limitBody, s.authenticate, s.rateLimit, idem.Handler)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) { s.writeError(w, r, apperr.NotFound("route")) })
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, &apperr.Error{Status: http.StatusMethodNotAllowed, Code: "METHOD_NOT_ALLOWED", Message: "method not allowed"})

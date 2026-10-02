@@ -177,3 +177,14 @@ func (s *Service) SeatMap(ctx context.Context, id uuid.UUID) (SeatMap, error) {
 	}
 	return sm, nil
 }
+
+// CountAvailable returns how many of an event's seats are available right now.
+func (s *Service) CountAvailable(ctx context.Context, id uuid.UUID) (int, error) {
+	n, err := sqlc.New(s.pool).CountAvailableSeats(ctx, id)
+	return int(n), err
+}
+
+// OnSaleEventIDs lists events currently on sale that haven't started.
+func (s *Service) OnSaleEventIDs(ctx context.Context) ([]uuid.UUID, error) {
+	return sqlc.New(s.pool).ListOnSaleEventIDs(ctx)
+}

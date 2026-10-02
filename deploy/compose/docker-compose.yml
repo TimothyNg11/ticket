@@ -36,6 +36,15 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   payments:
     image: ticket/payments-mock:dev
     build: { context: ../.., args: { SERVICE: payments_mock } }
@@ -52,6 +61,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       TICKET_SIGNING_KEY: ${TICKET_SIGNING_KEY:?set TICKET_SIGNING_KEY in .env}
       PAYMENTS_URL: http://payments:8081
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_SCALE: ${RATE_LIMIT_SCALE:-1}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       HOLD_TTL: ${HOLD_TTL:-10m}
     ports: ["8080:8080"]
@@ -63,6 +74,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       payments: { condition: service_started }
+      redis: { condition: service_healthy }
 
   sweeper:
     <<: *workers-image
@@ -72,6 +84,16 @@ services:
       SWEEP_INTERVAL: 15s
     depends_on:
       migrate: { condition: service_completed_successfully }
+
+  availability:
+    <<: *workers-image
+    command: ["availability"]
+    environment:
+      DATABASE_URL: *db-url
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
 
 volumes:
   pgdata: {}

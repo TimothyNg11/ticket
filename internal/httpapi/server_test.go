@@ -20,9 +20,11 @@ import (
 	"ticket/internal/account"
 	"ticket/internal/auth"
 	"ticket/internal/booking"
+	"ticket/internal/cache"
 	"ticket/internal/inventory"
 	"ticket/internal/payments"
 	"ticket/internal/payments/mock"
+	"ticket/internal/ratelimit"
 	"ticket/internal/testutil"
 )
 
@@ -41,27 +43,40 @@ type testEnv struct {
 	pool   *pgxpool.Pool
 	tokens *auth.TokenIssuer
 	pay    *mock.Server
+	cache  *cache.Cache
 }
 
-func newTestEnv(t *testing.T) *testEnv {
+func newTestEnv(t *testing.T) *testEnv { return newTestEnvScaled(t, 1000) }
+
+// newTestEnvScaled builds the API with rate limits multiplied by scale.
+func newTestEnvScaled(t *testing.T, scale float64) *testEnv {
 	t.Helper()
 	pool := pg.NewDB(t)
 	tokens := auth.NewTokenIssuer(testSecret, 15*time.Minute)
 	pay := mock.New(mock.Config{}, nil)
+	rdb := testutil.NewRedis(t)
+	inv := inventory.New(pool)
+	c := cache.New(rdb, inv, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	paySrv := httptest.NewServer(pay)
 	t.Cleanup(paySrv.Close)
+	book := booking.New(pool, payments.NewHTTPClient(paySrv.URL, time.Second),
+		auth.NewTicketSigner([]byte("ticket-signing-key-ticket-signing-key")), 10*time.Minute)
+	book.OnSeatsChanged(c.SeatsChanged)
 	h := NewHandler(Deps{
 		Pool:      pool,
 		Tokens:    tokens,
 		Accounts:  account.New(pool, tokens, 24*time.Hour, map[string]bool{testAdminEmail: true}),
-		Inventory: inventory.New(pool),
-		Booking: booking.New(pool, payments.NewHTTPClient(paySrv.URL, time.Second),
-			auth.NewTicketSigner([]byte("ticket-signing-key-ticket-signing-key")), 10*time.Minute),
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Inventory: inv,
+		Booking:   book,
+		Cache:     c,
+		// Tests send many requests from one IP; scale limits up so only the
+		// rate-limit tests (which use their own limiter) ever see a 429.
+		Limiter: ratelimit.New(rdb, scale, nil),
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return &testEnv{srv: srv, pool: pool, tokens: tokens, pay: pay}
+	return &testEnv{srv: srv, pool: pool, tokens: tokens, pay: pay, cache: c}
 }
 
 func newTestServer(t *testing.T) *httptest.Server { return newTestEnv(t).srv }

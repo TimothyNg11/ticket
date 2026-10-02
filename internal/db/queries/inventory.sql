@@ -44,3 +44,9 @@ JOIN seats s      ON s.id = es.seat_id
 JOIN sections sec ON sec.id = s.section_id
 WHERE es.event_id = $1
 ORDER BY sec.name, sec.id, s.row_label, s.seat_number;
+
+-- name: CountAvailableSeats :one
+SELECT count(*) FROM event_seats WHERE event_id = $1 AND state = 'available';
+
+-- name: ListOnSaleEventIDs :many
+SELECT id FROM events WHERE status = 'on_sale' AND starts_at > now();

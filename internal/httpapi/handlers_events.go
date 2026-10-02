@@ -17,7 +17,7 @@ func (s *Server) ListEvents(ctx context.Context, req gen.ListEventsRequestObject
 	if req.Params.Cursor != nil {
 		cursor = *req.Params.Cursor
 	}
-	events, next, err := s.Inventory.ListEvents(ctx, cursor, limit)
+	events, next, err := s.Cache.ListEvents(ctx, cursor, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -33,16 +33,22 @@ func (s *Server) ListEvents(ctx context.Context, req gen.ListEventsRequestObject
 
 // GetEvent returns one published event.
 func (s *Server) GetEvent(ctx context.Context, req gen.GetEventRequestObject) (gen.GetEventResponseObject, error) {
-	e, err := s.Inventory.GetEvent(ctx, req.Id)
+	e, err := s.Cache.Event(ctx, req.Id)
 	if err != nil {
 		return nil, err
 	}
-	return gen.GetEvent200JSONResponse(toEvent(e)), nil
+	out := toEvent(e)
+	n, err := s.Cache.Available(ctx, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	out.AvailableSeats = &n
+	return gen.GetEvent200JSONResponse(out), nil
 }
 
 // GetSeatMap returns every seat of a published event with state and price.
 func (s *Server) GetSeatMap(ctx context.Context, req gen.GetSeatMapRequestObject) (gen.GetSeatMapResponseObject, error) {
-	sm, err := s.Inventory.SeatMap(ctx, req.Id)
+	sm, err := s.Cache.SeatMap(ctx, req.Id)
 	if err != nil {
 		return nil, err
 	}

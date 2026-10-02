@@ -74,5 +74,6 @@ func (s *Server) AdminPublishEvent(ctx context.Context, req gen.AdminPublishEven
 	if err != nil {
 		return nil, err
 	}
+	s.Cache.EventChanged(ctx, e.ID)
 	return gen.AdminPublishEvent200JSONResponse(toEvent(e)), nil
 }

@@ -27,7 +27,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		c, err := s.Tokens.Verify(tok)
-		if err != nil {
+		if err != nil || s.Cache.IsRevoked(r.Context(), c.JTI) {
 			s.writeError(w, r, apperr.Unauthenticated("invalid or expired access token"))
 			return
 		}
