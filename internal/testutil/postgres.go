@@ -62,6 +62,7 @@ func RunWithPostgres(m *testing.M, out **PG) int {
 		return 1
 	}
 	defer p.close()
+	defer stopRedis()
 	*out = p
 	return m.Run()
 }

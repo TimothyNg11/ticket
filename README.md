@@ -83,6 +83,8 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | `internal/booking` | Holds, checkout, orders, cancellation, hold expiry, invariant checks |
 | `internal/payments` | Payment client; `mock/` is the fake provider |
 | `internal/idempotency` | Idempotency-Key middleware |
+| `internal/cache` | Redis cache-aside for seat maps and events, availability counters, token revocation |
+| `internal/ratelimit` | Token-bucket limits in an atomic Redis Lua script, with in-process fallback |
 | `internal/httpapi` | Router, middleware, handlers |
 | `internal/testutil` | Postgres test harness |
 | `deploy/compose` | Local Docker Compose stack |
@@ -95,7 +97,7 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | 1 | Foundation: auth, venues, events, seat maps, Compose | Done |
 | 2 | Holds, checkout, mock payments, idempotency keys, expiry sweeper | Done |
 | 3 | CI | Pending |
-| 4 | Caching and rate limiting | Pending |
+| 4 | Redis caching (versioned seat maps, stampede protection), token-bucket rate limits, access-token revocation | Done |
 | 5 | Waiting room | Pending |
 | 6 | Reliability | Pending |
 | 7 | Kubernetes | Pending |

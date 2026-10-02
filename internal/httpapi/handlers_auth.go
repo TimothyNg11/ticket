@@ -51,6 +51,13 @@ func (s *Server) Logout(ctx context.Context, req gen.LogoutRequestObject) (gen.L
 	if err := s.Accounts.Logout(ctx, req.Body.RefreshToken); err != nil {
 		return nil, err
 	}
+	// Access tokens are stateless and would stay valid until they expire; if the
+	// caller sent one, put its id on the revocation list for its remaining life.
+	if c, ok := userFrom(ctx); ok {
+		if err := s.Cache.Revoke(ctx, c.JTI, c.ExpiresAt); err != nil {
+			s.Log.WarnContext(ctx, "revoking access token", "err", err)
+		}
+	}
 	return gen.Logout204Response{}, nil
 }
 

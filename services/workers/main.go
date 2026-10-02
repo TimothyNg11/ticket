@@ -1,7 +1,9 @@
 // Command workers runs background jobs. Each job is a subcommand so it can be
 // deployed and scaled on its own:
 //
-//	workers sweeper   release expired holds every SWEEP_INTERVAL (default 15s)
+//	workers sweeper        release expired holds every SWEEP_INTERVAL (default 15s)
+//	workers availability   recount seats per on-sale event into Redis every minute,
+//	                       correcting drift in the cached availability counters
 //
 // Every job is safe to run as several replicas at once: work is claimed with
 // FOR UPDATE SKIP LOCKED, so replicas never process the same row.
@@ -18,8 +20,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"ticket/internal/booking"
+	"ticket/internal/cache"
+	"ticket/internal/inventory"
 )
 
 func main() {
@@ -61,6 +66,21 @@ func run(ctx context.Context, job string, log *slog.Logger) error {
 					return nil
 				}
 			}
+		})
+	case "availability":
+		ropt, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+		if err != nil {
+			return fmt.Errorf("REDIS_URL: %w", err)
+		}
+		rdb := redis.NewClient(ropt)
+		defer func() { _ = rdb.Close() }()
+		c := cache.New(rdb, inventory.New(pool), log)
+		return every(ctx, envDuration("AVAILABILITY_INTERVAL", time.Minute), log, func(ctx context.Context) error {
+			n, err := c.RecomputeAvailability(ctx)
+			if err == nil {
+				log.Info("recomputed availability", "events", n)
+			}
+			return err
 		})
 	default:
 		return fmt.Errorf("unknown job %q", job)

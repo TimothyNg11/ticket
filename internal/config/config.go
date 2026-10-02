@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,6 +21,13 @@ type Config struct {
 	TicketSigningKey []byte
 	PaymentsURL      string
 	HoldTTL          time.Duration
+	RedisURL         string
+	// RateLimitScale multiplies every rate limit (1 in production; load tests
+	// that simulate many users from few machines raise it).
+	RateLimitScale float64
+	// TrustProxy reads client IPs from X-Forwarded-For. Enable only behind an
+	// ingress that sets that header.
+	TrustProxy bool
 	// AdminEmails lists (lower-cased) emails that receive the admin role when they
 	// register. It is how the first admin is bootstrapped; see docs/decisions/0002.
 	AdminEmails map[string]bool
@@ -34,6 +42,9 @@ func Load(getenv func(string) string) (Config, error) {
 		JWTSecret:        []byte(getenv("JWT_SECRET")),
 		TicketSigningKey: []byte(getenv("TICKET_SIGNING_KEY")),
 		PaymentsURL:      getenv("PAYMENTS_URL"),
+		RedisURL:         getenv("REDIS_URL"),
+		TrustProxy:       getenv("TRUST_PROXY") == "true",
+		RateLimitScale:   1,
 		AdminEmails:      map[string]bool{},
 	}
 	if c.HTTPAddr == "" {
@@ -51,6 +62,16 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.PaymentsURL == "" {
 		return Config{}, errors.New("PAYMENTS_URL is required")
+	}
+	if c.RedisURL == "" {
+		return Config{}, errors.New("REDIS_URL is required")
+	}
+	if v := getenv("RATE_LIMIT_SCALE"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f <= 0 {
+			return Config{}, fmt.Errorf("RATE_LIMIT_SCALE must be a positive number, got %q", v)
+		}
+		c.RateLimitScale = f
 	}
 	var err error
 	if c.HoldTTL, err = duration(getenv, "HOLD_TTL", 10*time.Minute); err != nil {

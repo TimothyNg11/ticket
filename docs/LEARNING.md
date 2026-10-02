@@ -170,3 +170,45 @@ A ticket's QR payload is `base64(ticket id | seat id) . HMAC-SHA256(payload)` (`
 ### Invariants
 
 `booking.CheckInvariants` asks the database directly whether the promises hold: no seat with two valid tickets, no sold seat without a confirmed order, every confirmed order paid exactly once with tickets matching seats, and no held seat without an active hold. `TestFlashSaleEndToEnd` races 200 buyers through hold, checkout, cancel, and resale, then asserts every count is zero. Phase 8 runs the same checks on a schedule and alerts.
+
+## Phase 4: Caching and rate limiting
+
+### Cache-aside, and why Redis never decides who owns a seat
+
+During an on-sale almost all traffic is reads: thousands of people refreshing the seat map. `internal/cache` puts Redis in front of those reads using **cache-aside**: look in Redis; on a miss, read Postgres and store the result. Redis only ever holds *copies*. Holds still go straight to Postgres row locks, so a stale cache entry can make a seat *look* free for a moment, but it can never let two people get it.
+
+If Redis is unreachable, every cache method logs and falls through to Postgres (`TestRedisDownFallsBackToPostgres`). Losing the cache makes reads slower; it doesn't make them fail.
+
+### Versioned keys instead of deleting entries
+
+The seat map key carries a version number: `seatmap:{event}:v{n}`. Every hold, release, sale, or cancellation calls `SeatsChanged`, which runs `INCR seatmap:{event}:ver`. Readers fetch the current version first, so after a change they look up a key that doesn't exist yet and rebuild it. Old versions simply expire.
+
+Compared with deleting the key, versioning avoids a race. If a reader builds the map from slightly old data *after* a delete, it would put stale data back under the live key. With versions, stale data lands under an old version number nobody reads anymore. The hook runs *after* the database commit, so readers never see a version bump before the change is visible.
+
+### Stampedes
+
+A hot key expiring means hundreds of requests miss at the same instant and all hit Postgres: a cache stampede. Two layers stop that:
+
+- **singleflight** (in process): concurrent misses for the same key share one rebuild (`TestStampedeRebuildsOnce`: 50 concurrent cold reads, 1 query).
+- **A short Redis lock** (across pods): `SET lock:<key> NX PX 2000`. The pod that gets it rebuilds; other pods serve the previous seat map from a longer-lived `:stale` copy instead of querying (`TestOtherPodRebuildingServesStale`).
+
+TTLs get up to 20% random jitter, so keys filled at the same moment don't all expire at the same moment.
+
+### Counters that can drift, and a job that fixes them
+
+`GET /v1/events/{id}` includes `available_seats`, served from a Redis counter that each change adjusts (`INCRBY` with the delta the booking code reports). Counters updated "after commit" can drift: a crash or a Redis blip between the commit and the `INCRBY` loses an update. Rather than pretending that can't happen, the `workers availability` job recounts every on-sale event from Postgres each minute and overwrites the counters (`TestRecomputeFixesDrift`).
+
+### Logging out a stateless token
+
+JWT access tokens are verified without a database lookup, which also means they can't be "deleted". Logout therefore writes the token's id (`jti`) to `revoked:{jti}` with a TTL equal to the token's remaining life, and the auth middleware rejects revoked ids. The set stays small because entries vanish when the token would have expired anyway. If Redis is down the check passes (fails open): tokens live 15 minutes, and refusing every request during a cache outage would turn a degraded dependency into a full outage. ADR 0006 records that tradeoff.
+
+### Token-bucket rate limiting in a Lua script
+
+Each limit is a bucket holding up to `burst` tokens that refills at `rate` per second; every request spends one (`internal/ratelimit/bucket.lua`). Two details matter:
+
+- **Atomicity.** Reading the tokens, refilling, spending, and writing back all happen inside one Lua script, which Redis runs without interleaving anything else. Doing the same from Go (GET, compute, SET) lets two concurrent requests both read "1 token left" and both pass. `TestAtomicUnderConcurrency` sends 100 simultaneous requests against a burst of 10 and gets exactly 10 through.
+- **One clock.** The script uses Redis's `TIME`, not the caller's clock, so pods with skewed clocks agree.
+
+Buckets: reads 20/s (burst 40) per user or IP; logins 10/min and registrations 5/min per IP (slows credential stuffing); holds 5/min per user (each hold locks inventory); other writes 60/min per user. Going over returns `429 RATE_LIMITED` with `Retry-After`. If Redis is down, an in-process limiter takes over at a quarter of the allowance per pod, so protection degrades rather than disappearing (`TestFallsBackWhenRedisDown`).
+
+Per-IP limits need the real client IP. Behind the ingress, `X-Forwarded-For` lists every hop, and anything left of the last entry was supplied by the client and can be forged. With `TRUST_PROXY=true` the API uses the right-most entry, which the ingress itself appended (`TestClientIP`).

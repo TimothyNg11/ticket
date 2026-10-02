@@ -20,15 +20,18 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"ticket/internal/account"
 	"ticket/internal/auth"
 	"ticket/internal/booking"
+	"ticket/internal/cache"
 	"ticket/internal/config"
 	"ticket/internal/db"
 	"ticket/internal/httpapi"
 	"ticket/internal/inventory"
 	"ticket/internal/payments"
+	"ticket/internal/ratelimit"
 )
 
 func main() {
@@ -68,17 +71,35 @@ func serve(log *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	ropt, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("REDIS_URL: %w", err)
+	}
+	rdb := redis.NewClient(ropt)
+	defer func() { _ = rdb.Close() }()
+
+	inv := inventory.New(pool)
+	c := cache.New(rdb, inv, log)
+	book := booking.New(pool, payments.NewHTTPClient(cfg.PaymentsURL, 3*time.Second),
+		auth.NewTicketSigner(cfg.TicketSigningKey), cfg.HoldTTL)
+	book.OnSeatsChanged(c.SeatsChanged)
+	limiter := ratelimit.New(rdb, cfg.RateLimitScale, func(err error) {
+		log.Warn("rate limiter falling back to in-process limits", "err", err)
+	})
+
 	tokens := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewHandler(httpapi.Deps{
-			Pool:      pool,
-			Tokens:    tokens,
-			Accounts:  account.New(pool, tokens, cfg.RefreshTokenTTL, cfg.AdminEmails),
-			Inventory: inventory.New(pool),
-			Booking: booking.New(pool, payments.NewHTTPClient(cfg.PaymentsURL, 3*time.Second),
-				auth.NewTicketSigner(cfg.TicketSigningKey), cfg.HoldTTL),
-			Log: log,
+			Pool:       pool,
+			Tokens:     tokens,
+			Accounts:   account.New(pool, tokens, cfg.RefreshTokenTTL, cfg.AdminEmails),
+			Inventory:  inv,
+			Booking:    book,
+			Cache:      c,
+			Limiter:    limiter,
+			TrustProxy: cfg.TrustProxy,
+			Log:        log,
 		}),
 		// Bound every phase of a connection so slow or idle clients can't pin goroutines.
 		ReadHeaderTimeout: 5 * time.Second,

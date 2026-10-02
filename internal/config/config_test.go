@@ -18,6 +18,7 @@ func valid() map[string]string {
 		"JWT_SECRET":         "0123456789abcdef0123456789abcdef",
 		"TICKET_SIGNING_KEY": "fedcba9876543210fedcba9876543210",
 		"PAYMENTS_URL":       "http://payments:8081",
+		"REDIS_URL":          "redis://redis:6379/0",
 	}
 }
 
@@ -30,6 +31,21 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Empty(t, c.AdminEmails)
 	assert.Equal(t, 10*time.Minute, c.HoldTTL)
 	assert.Equal(t, "http://payments:8081", c.PaymentsURL)
+	assert.InDelta(t, 1.0, c.RateLimitScale, 0)
+	assert.False(t, c.TrustProxy)
+}
+
+func TestLoadRateLimitScale(t *testing.T) {
+	m := valid()
+	m["RATE_LIMIT_SCALE"] = "50"
+	m["TRUST_PROXY"] = "true"
+	c, err := Load(env(m))
+	require.NoError(t, err)
+	assert.InDelta(t, 50.0, c.RateLimitScale, 0)
+	assert.True(t, c.TrustProxy)
+	m["RATE_LIMIT_SCALE"] = "-1"
+	_, err = Load(env(m))
+	assert.ErrorContains(t, err, "RATE_LIMIT_SCALE")
 }
 
 func TestLoadRequiresTicketKeyAndPayments(t *testing.T) {

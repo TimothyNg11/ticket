@@ -43,9 +43,10 @@ FOR UPDATE SKIP LOCKED;
 -- name: ExpireHolds :exec
 UPDATE holds SET status = 'expired' WHERE id = ANY(sqlc.arg(ids)::uuid[]);
 
--- name: ReleaseSeatsOfHolds :execrows
+-- name: ReleaseSeatsOfHolds :many
 UPDATE event_seats SET state = 'available', hold_id = NULL, version = version + 1
-WHERE hold_id = ANY(sqlc.arg(ids)::uuid[]) AND state = 'held';
+WHERE hold_id = ANY(sqlc.arg(ids)::uuid[]) AND state = 'held'
+RETURNING event_id;
 
 -- name: CreateOrder :one
 INSERT INTO orders (user_id, event_id, hold_id, total_cents, status, idempotency_key)
@@ -90,6 +91,3 @@ ON CONFLICT (idempotency_key) DO NOTHING;
 
 -- name: GetChargeRef :one
 SELECT provider_ref FROM payments WHERE order_id = $1 AND kind = 'charge' AND status = 'succeeded';
-
--- name: EventsOfHolds :many
-SELECT DISTINCT event_id FROM holds WHERE id = ANY(sqlc.arg(ids)::uuid[]);

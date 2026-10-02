@@ -31,17 +31,19 @@ type Service struct {
 	pay      payments.Client
 	signer   *auth.TicketSigner
 	holdTTL  time.Duration
-	onChange func(eventID uuid.UUID) // called after seat states change; Phase 4 hooks cache invalidation here
+	onChange func(eventID uuid.UUID, availableDelta int) // called after seat states change
 }
 
 // New returns a Service. Holds expire holdTTL after creation.
 func New(pool *pgxpool.Pool, pay payments.Client, signer *auth.TicketSigner, holdTTL time.Duration) *Service {
-	return &Service{pool: pool, pay: pay, signer: signer, holdTTL: holdTTL, onChange: func(uuid.UUID) {}}
+	return &Service{pool: pool, pay: pay, signer: signer, holdTTL: holdTTL, onChange: func(uuid.UUID, int) {}}
 }
 
 // OnSeatsChanged registers fn to run after any commit that changes seat states for
-// an event. It must be fast and must not fail the caller.
-func (s *Service) OnSeatsChanged(fn func(eventID uuid.UUID)) { s.onChange = fn }
+// an event; availableDelta is the change in available seats. The cache uses it
+// to invalidate seat maps and adjust availability counters. It must be fast and
+// must not fail the caller: the commit has already happened.
+func (s *Service) OnSeatsChanged(fn func(eventID uuid.UUID, availableDelta int)) { s.onChange = fn }
 
 // Hold is a temporary claim on seats.
 type Hold struct {

@@ -20,7 +20,10 @@ func TestIssueAndVerify(t *testing.T) {
 
 	c, err := ti.Verify(tok)
 	require.NoError(t, err)
-	assert.Equal(t, Claims{UserID: id, Role: "admin"}, c)
+	assert.Equal(t, id, c.UserID)
+	assert.Equal(t, "admin", c.Role)
+	assert.NotEmpty(t, c.JTI)
+	assert.WithinDuration(t, time.Now().Add(time.Minute), c.ExpiresAt, 2*time.Second)
 }
 
 func TestVerifyRejectsExpired(t *testing.T) {

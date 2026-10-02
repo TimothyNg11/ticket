@@ -60,6 +60,7 @@ func (s *Service) ListOrders(ctx context.Context, userID uuid.UUID, limit int) (
 // finishes it later.
 func (s *Service) CancelOrder(ctx context.Context, userID, orderID uuid.UUID) (Order, error) {
 	var o sqlc.Order
+	var released int64
 	err := db.InTx(ctx, s.pool, func(q *sqlc.Queries) error {
 		var err error
 		o, err = q.GetOrderForUpdate(ctx, orderID)
@@ -82,7 +83,7 @@ func (s *Service) CancelOrder(ctx context.Context, userID, orderID uuid.UUID) (O
 		if err := q.VoidOrderTickets(ctx, o.ID); err != nil {
 			return err
 		}
-		if _, err := q.ReleaseOrderSeats(ctx, &o.ID); err != nil {
+		if released, err = q.ReleaseOrderSeats(ctx, &o.ID); err != nil {
 			return err
 		}
 		return q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "cancelled"})
@@ -90,7 +91,7 @@ func (s *Service) CancelOrder(ctx context.Context, userID, orderID uuid.UUID) (O
 	if err != nil {
 		return Order{}, err
 	}
-	s.onChange(o.EventID)
+	s.onChange(o.EventID, int(released))
 	// The refund happens after commit, outside the transaction. A failure here is
 	// not the user's problem: the cancellation stands and the refund is retried.
 	_ = s.RetryRefund(ctx, o.ID)

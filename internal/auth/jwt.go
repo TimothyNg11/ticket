@@ -16,6 +16,9 @@ var ErrInvalidToken = errors.New("auth: invalid token")
 type Claims struct {
 	UserID uuid.UUID
 	Role   string
+	// JTI uniquely identifies the token so it can be revoked before it expires.
+	JTI       string
+	ExpiresAt time.Time
 }
 
 type jwtClaims struct {
@@ -66,5 +69,5 @@ func (ti *TokenIssuer) Verify(token string) (Claims, error) {
 	if err != nil {
 		return Claims{}, ErrInvalidToken
 	}
-	return Claims{UserID: id, Role: c.Role}, nil
+	return Claims{UserID: id, Role: c.Role, JTI: c.ID, ExpiresAt: c.ExpiresAt.Time}, nil
 }

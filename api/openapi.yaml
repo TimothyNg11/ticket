@@ -41,6 +41,7 @@ paths:
   /v1/auth/logout:
     post:
       operationId: logout
+      description: Revokes the refresh token's session. If an access token is sent too, it is revoked immediately as well.
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RefreshRequest" } } } }
       responses:
         "204": { description: Refresh token revoked }
@@ -224,6 +225,7 @@ components:
         starts_at: { type: string, format: date-time }
         on_sale_at: { type: string, format: date-time }
         status: { type: string, description: "draft, on_sale, sold_out, or ended" }
+        available_seats: { type: integer, description: "Seats still available. Included on GET /v1/events/{id} only." }
     EventPage:
       type: object
       required: [items]
