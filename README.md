@@ -73,7 +73,7 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | --- | --- |
 | `api/openapi.yaml` | API contract (source of truth for HTTP types) |
 | `services/api` | API binary: `serve`, `migrate`, `healthcheck` |
-| `services/workers` | Background jobs: `sweeper`, `availability`, `admitter` |
+| `services/workers` | Background jobs: `sweeper`, `availability`, `admitter`, `reconciler`, `outbox-relay`, `notifier` |
 | `services/payments_mock` | Fake payment provider with injectable latency and failures |
 | `Dockerfile` | One image recipe for every service (`--build-arg SERVICE=…`) |
 | `internal/db` | Migrations (embedded), sqlc queries, transaction helpers |
@@ -85,6 +85,7 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | `internal/idempotency` | Idempotency-Key middleware |
 | `internal/cache` | Redis cache-aside for seat maps and events, availability counters, token revocation |
 | `internal/waitingroom` | Virtual queue (Redis sorted set), batch admission, admission passes |
+| `internal/outbox` | Outbox relay to Redis Streams; consumer groups with dedup |
 | `internal/ratelimit` | Token-bucket limits in an atomic Redis Lua script, with in-process fallback |
 | `internal/httpapi` | Router, middleware, handlers |
 | `internal/testutil` | Postgres test harness |
@@ -100,7 +101,7 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | 3 | CI | Pending |
 | 4 | Redis caching (versioned seat maps, stampede protection), token-bucket rate limits, access-token revocation | Done |
 | 5 | Waiting room: FCFS Redis queue, batch admission, signed admission passes gating holds | Done |
-| 6 | Reliability | Pending |
+| 6 | Reliability: retries + circuit breaker, transactional outbox, reconciler, graceful shutdown | Done |
 | 7 | Kubernetes | Pending |
 | 8 | Observability | Pending |
 | 9 | Load and chaos testing | Pending |

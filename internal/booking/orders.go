@@ -86,7 +86,10 @@ func (s *Service) CancelOrder(ctx context.Context, userID, orderID uuid.UUID) (O
 		if released, err = q.ReleaseOrderSeats(ctx, &o.ID); err != nil {
 			return err
 		}
-		return q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "cancelled"})
+		if err := q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "cancelled"}); err != nil {
+			return err
+		}
+		return emit(ctx, q, "order.cancelled", o, nil)
 	})
 	if err != nil {
 		return Order{}, err
@@ -133,6 +136,9 @@ func (s *Service) RetryRefund(ctx context.Context, orderID uuid.UUID) error {
 		}); err != nil {
 			return err
 		}
-		return q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "refunded"})
+		if err := q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "refunded"}); err != nil {
+			return err
+		}
+		return emit(ctx, q, "order.refunded", o, nil)
 	})
 }

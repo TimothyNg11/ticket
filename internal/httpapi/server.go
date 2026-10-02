@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -39,7 +40,9 @@ type Deps struct {
 	Booking   *booking.Service
 	Cache     *cache.Cache
 	Room      *waitingroom.Room
-	Limiter   *ratelimit.Limiter // nil disables rate limiting
+	// Draining is set during shutdown; readiness then fails so traffic moves away.
+	Draining *atomic.Bool
+	Limiter  *ratelimit.Limiter // nil disables rate limiting
 	// TrustProxy reads the client IP from X-Forwarded-For (set it only behind a
 	// proxy that overwrites that header, like the ingress).
 	TrustProxy bool

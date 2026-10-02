@@ -22,6 +22,16 @@ type Config struct {
 	DeclineRate float64 `json:"decline_rate"` // probability a new charge is declined
 	ErrorRate   float64 `json:"error_rate"`   // probability a request returns 500
 	LatencyMS   int     `json:"latency_ms"`   // delay before every response
+	SlowRate    float64 `json:"slow_rate"`    // probability a response is delayed by SlowMS more
+	SlowMS      int     `json:"slow_ms"`
+}
+
+func (c Config) delay(roll float64) time.Duration {
+	d := time.Duration(c.LatencyMS) * time.Millisecond
+	if roll < c.SlowRate {
+		d += time.Duration(c.SlowMS) * time.Millisecond
+	}
+	return d
 }
 
 type record struct {
@@ -86,6 +96,10 @@ func (s *Server) charge(w http.ResponseWriter, r *http.Request) {
 	rec, seen := s.charges[req.Key]
 	failNow := s.rnd() < cfg.ErrorRate
 	recordFirst := s.rnd() < 0.5
+	slowRoll := 1.0
+	if cfg.SlowRate > 0 {
+		slowRoll = s.rnd()
+	}
 	if !seen && (!failNow || recordFirst) {
 		status := "succeeded"
 		if s.rnd() < cfg.DeclineRate {
@@ -97,7 +111,7 @@ func (s *Server) charge(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	time.Sleep(time.Duration(cfg.LatencyMS) * time.Millisecond)
+	time.Sleep(cfg.delay(slowRoll))
 	if failNow {
 		http.Error(w, "provider error", http.StatusInternalServerError)
 		return
@@ -162,4 +176,16 @@ func (s *Server) stats(w http.ResponseWriter, _ *http.Request) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// Charged returns the status of every charge by idempotency key ("succeeded" or
+// "declined"), so tests can compare what the provider did with what the orders say.
+func (s *Server) Charged() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]string, len(s.charges))
+	for k, r := range s.charges {
+		out[k] = r.Status
+	}
+	return out
 }

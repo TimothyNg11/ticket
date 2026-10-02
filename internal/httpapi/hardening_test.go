@@ -59,3 +59,17 @@ func TestPanicIsJSON500(t *testing.T) {
 	assert.Equal(t, 500, rec.Code)
 	assert.Equal(t, "INTERNAL", errCode(t, rec.Body.Bytes()))
 }
+
+// During shutdown the pod fails readiness (so it leaves the load balancer) but
+// stays live and keeps serving the requests still reaching it.
+func TestDrainingFailsReadinessOnly(t *testing.T) {
+	e := newTestEnv(t)
+	e.draining.Store(true)
+	status, body := call(t, e.srv, "GET", "/readyz", "", nil)
+	assert.Equal(t, 503, status)
+	assert.Equal(t, "DEPENDENCY_DOWN", errCode(t, body))
+	status, _ = call(t, e.srv, "GET", "/healthz", "", nil)
+	assert.Equal(t, 200, status, "liveness stays green: don't restart a pod that is shutting down cleanly")
+	status, _ = call(t, e.srv, "GET", "/v1/events", "", nil)
+	assert.Equal(t, 200, status, "in-flight traffic is still served")
+}

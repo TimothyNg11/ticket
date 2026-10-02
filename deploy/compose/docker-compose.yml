@@ -66,6 +66,8 @@ services:
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       HOLD_TTL: ${HOLD_TTL:-10m}
     ports: ["8080:8080"]
+    # Room for DRAIN_DELAY plus in-flight requests before Docker sends SIGKILL.
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "/app", "healthcheck"]
       interval: 5s
@@ -102,6 +104,36 @@ services:
       DATABASE_URL: *db-url
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  reconciler:
+    <<: *workers-image
+    command: ["reconciler"]
+    environment:
+      DATABASE_URL: *db-url
+      PAYMENTS_URL: http://payments:8081
+      TICKET_SIGNING_KEY: ${TICKET_SIGNING_KEY:?set TICKET_SIGNING_KEY in .env}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  outbox-relay:
+    <<: *workers-image
+    command: ["outbox-relay"]
+    environment:
+      DATABASE_URL: *db-url
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  notifier:
+    <<: *workers-image
+    command: ["notifier"]
+    environment:
+      DATABASE_URL: *db-url
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
