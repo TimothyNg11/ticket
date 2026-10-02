@@ -93,10 +93,13 @@ func TestSeatMapInvalidatedOnSeatChange(t *testing.T) {
 func TestStampedeRebuildsOnce(t *testing.T) {
 	e := newEnv(t, testutil.NewRedis(t))
 	var wg sync.WaitGroup
-	for range 50 {
+	// Stagger the readers across the rebuild window: requests that miss just as
+	// the first rebuild finishes must find the filled key, not rebuild again.
+	for i := range 50 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			time.Sleep(time.Duration(i%10) * time.Millisecond)
 			_, err := e.c.SeatMap(context.Background(), e.eventID)
 			assert.NoError(t, err)
 		}()

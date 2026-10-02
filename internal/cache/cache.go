@@ -94,6 +94,11 @@ func (c *Cache) SeatMap(ctx context.Context, eventID uuid.UUID) (inventory.SeatM
 	c.Stats.Misses.Add(1)
 
 	v, err, _ := c.sf.Do(key, func() (any, error) {
+		// Check again: a request that missed just before another flight finished
+		// would otherwise start a second flight and rebuild a key that's now filled.
+		if sm, ok := c.getSeatMap(ctx, key); ok {
+			return sm, nil
+		}
 		got, err := c.rdb.SetNX(ctx, "lock:"+key, 1, rebuildLock).Result()
 		if err == nil && !got {
 			// Another pod is rebuilding: serve the last known map if there is one.
