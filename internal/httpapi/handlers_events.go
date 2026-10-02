@@ -67,8 +67,9 @@ func (s *Server) GetSeatMap(ctx context.Context, req gen.GetSeatMapRequestObject
 }
 
 func toEvent(e sqlc.Event) gen.Event {
+	q := e.QueueEnabled
 	return gen.Event{
 		Id: e.ID, VenueId: e.VenueID, Name: e.Name,
-		StartsAt: e.StartsAt, OnSaleAt: e.OnSaleAt, Status: e.Status,
+		StartsAt: e.StartsAt, OnSaleAt: e.OnSaleAt, Status: e.Status, QueueEnabled: &q,
 	}
 }

@@ -69,12 +69,36 @@ paths:
       responses:
         "200": { description: Seat map, content: { application/json: { schema: { $ref: "#/components/schemas/SeatMap" } } } }
         default: { $ref: "#/components/responses/Error" }
+  /v1/events/{id}/queue:
+    post:
+      operationId: joinQueue
+      summary: Join the waiting room for a high-demand event.
+      description: Joining again returns your existing place. Poll GET /v1/queue/{token} until admitted.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "200": { description: Your place in line, content: { application/json: { schema: { $ref: "#/components/schemas/QueueStatus" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/queue/{token}:
+    get:
+      operationId: getQueueStatus
+      summary: Poll your place in the waiting room; returns an admission token once admitted.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Status, content: { application/json: { schema: { $ref: "#/components/schemas/QueueStatus" } } } }
+        default: { $ref: "#/components/responses/Error" }
   /v1/events/{id}/holds:
     post:
       operationId: createHold
       summary: Hold 1 to 8 seats for 10 minutes.
+      description: For events with a waiting room, send the admission token from GET /v1/queue/{token}.
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "#/components/parameters/ID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        - { $ref: "#/components/parameters/ID" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { name: Admission-Token, in: header, required: false, schema: { type: string } }
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CreateHoldRequest" } } } }
       responses:
         "201": { description: Held, content: { application/json: { schema: { $ref: "#/components/schemas/Hold" } } } }
@@ -226,6 +250,7 @@ components:
         on_sale_at: { type: string, format: date-time }
         status: { type: string, description: "draft, on_sale, sold_out, or ended" }
         available_seats: { type: integer, description: "Seats still available. Included on GET /v1/events/{id} only." }
+        queue_enabled: { type: boolean, description: Buyers must go through the waiting room before holding seats. }
     EventPage:
       type: object
       required: [items]
@@ -302,6 +327,13 @@ components:
         name: { type: string, x-oapi-codegen-extra-tags: { validate: "required,max=200" } }
         starts_at: { type: string, format: date-time, x-oapi-codegen-extra-tags: { validate: "required" } }
         on_sale_at: { type: string, format: date-time, x-oapi-codegen-extra-tags: { validate: "required" } }
+        queue:
+          type: object
+          description: Waiting-room settings for high-demand events.
+          properties:
+            enabled: { type: boolean }
+            batch_size: { type: integer, description: "Users admitted per interval (default 500)", x-oapi-codegen-extra-tags: { validate: "omitempty,min=1,max=100000" } }
+            interval_seconds: { type: integer, description: "Seconds between batches (default 10)", x-oapi-codegen-extra-tags: { validate: "omitempty,min=1,max=3600" } }
         section_prices:
           type: array
           description: One entry per section of the venue.
@@ -357,3 +389,13 @@ components:
         event_seat_id: { type: string, format: uuid }
         status: { type: string, description: "valid or void" }
         qr_token: { type: string, description: HMAC-signed payload to render as a QR code }
+    QueueStatus:
+      type: object
+      required: [queue_token, admitted]
+      properties:
+        queue_token: { type: string, description: "Poll GET /v1/queue/{token} with this." }
+        admitted: { type: boolean }
+        position: { type: integer, description: 1-based place in line while waiting. }
+        estimated_wait_seconds: { type: integer }
+        admission_token: { type: string, description: Send as the Admission-Token header when holding seats. }
+        admission_expires_at: { type: string, format: date-time }

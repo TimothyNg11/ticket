@@ -28,6 +28,16 @@ type CreateEventRequest struct {
 	Name     string    `json:"name" validate:"required,max=200"`
 	OnSaleAt time.Time `json:"on_sale_at" validate:"required"`
 
+	// Queue Waiting-room settings for high-demand events.
+	Queue *struct {
+		// BatchSize Users admitted per interval (default 500)
+		BatchSize *int  `json:"batch_size,omitempty" validate:"omitempty,min=1,max=100000"`
+		Enabled   *bool `json:"enabled,omitempty"`
+
+		// IntervalSeconds Seconds between batches (default 10)
+		IntervalSeconds *int `json:"interval_seconds,omitempty" validate:"omitempty,min=1,max=3600"`
+	} `json:"queue,omitempty"`
+
 	// SectionPrices One entry per section of the venue.
 	SectionPrices []SectionPrice     `json:"section_prices" validate:"required,min=1,dive"`
 	StartsAt      time.Time          `json:"starts_at" validate:"required"`
@@ -66,7 +76,10 @@ type Event struct {
 	Id             openapi_types.UUID `json:"id"`
 	Name           string             `json:"name"`
 	OnSaleAt       time.Time          `json:"on_sale_at"`
-	StartsAt       time.Time          `json:"starts_at"`
+
+	// QueueEnabled Buyers must go through the waiting room before holding seats.
+	QueueEnabled *bool     `json:"queue_enabled,omitempty"`
+	StartsAt     time.Time `json:"starts_at"`
 
 	// Status draft, on_sale, sold_out, or ended
 	Status  string             `json:"status"`
@@ -119,6 +132,22 @@ type Order struct {
 // OrderList defines model for OrderList.
 type OrderList struct {
 	Items []Order `json:"items"`
+}
+
+// QueueStatus defines model for QueueStatus.
+type QueueStatus struct {
+	AdmissionExpiresAt *time.Time `json:"admission_expires_at,omitempty"`
+
+	// AdmissionToken Send as the Admission-Token header when holding seats.
+	AdmissionToken       *string `json:"admission_token,omitempty"`
+	Admitted             bool    `json:"admitted"`
+	EstimatedWaitSeconds *int    `json:"estimated_wait_seconds,omitempty"`
+
+	// Position 1-based place in line while waiting.
+	Position *int `json:"position,omitempty"`
+
+	// QueueToken Poll GET /v1/queue/{token} with this.
+	QueueToken string `json:"queue_token"`
 }
 
 // RefreshRequest defines model for RefreshRequest.
@@ -239,6 +268,13 @@ type ListEventsParams struct {
 type CreateHoldParams struct {
 	// IdempotencyKey Client-chosen key (1-64 chars). Retrying with the same key returns the stored response instead of repeating the action.
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+	AdmissionToken *string        `json:"Admission-Token,omitempty"`
+}
+
+// JoinQueueParams defines parameters for JoinQueue.
+type JoinQueueParams struct {
+	// IdempotencyKey Client-chosen key (1-64 chars). Retrying with the same key returns the stored response instead of repeating the action.
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
 // ReleaseHoldParams defines parameters for ReleaseHold.
@@ -323,6 +359,9 @@ type ServerInterface interface {
 	// CreateHold Hold 1 to 8 seats for 10 minutes.
 	// (POST /v1/events/{id}/holds)
 	CreateHold(w http.ResponseWriter, r *http.Request, id ID, params CreateHoldParams)
+	// JoinQueue Join the waiting room for a high-demand event.
+	// (POST /v1/events/{id}/queue)
+	JoinQueue(w http.ResponseWriter, r *http.Request, id ID, params JoinQueueParams)
 
 	// (GET /v1/events/{id}/seatmap)
 	GetSeatMap(w http.ResponseWriter, r *http.Request, id ID)
@@ -341,6 +380,9 @@ type ServerInterface interface {
 	// CancelOrder Cancel a confirmed order before the event and refund it.
 	// (POST /v1/orders/{id}/cancel)
 	CancelOrder(w http.ResponseWriter, r *http.Request, id ID, params CancelOrderParams)
+	// GetQueueStatus Poll your place in the waiting room; returns an admission token once admitted.
+	// (GET /v1/queue/{token})
+	GetQueueStatus(w http.ResponseWriter, r *http.Request, token string)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -410,6 +452,12 @@ func (_ Unimplemented) CreateHold(w http.ResponseWriter, r *http.Request, id ID,
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// JoinQueue Join the waiting room for a high-demand event.
+// (POST /v1/events/{id}/queue)
+func (_ Unimplemented) JoinQueue(w http.ResponseWriter, r *http.Request, id ID, params JoinQueueParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /v1/events/{id}/seatmap)
 func (_ Unimplemented) GetSeatMap(w http.ResponseWriter, r *http.Request, id ID) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -440,6 +488,12 @@ func (_ Unimplemented) GetOrder(w http.ResponseWriter, r *http.Request, id ID) {
 // CancelOrder Cancel a confirmed order before the event and refund it.
 // (POST /v1/orders/{id}/cancel)
 func (_ Unimplemented) CancelOrder(w http.ResponseWriter, r *http.Request, id ID, params CancelOrderParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetQueueStatus Poll your place in the waiting room; returns an admission token once admitted.
+// (GET /v1/queue/{token})
+func (_ Unimplemented) GetQueueStatus(w http.ResponseWriter, r *http.Request, token string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -705,8 +759,81 @@ func (siw *ServerInterfaceWrapper) CreateHold(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// ------------- Optional header parameter "Admission-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Admission-Token")]; found {
+		var AdmissionToken string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Admission-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Admission-Token", valueList[0], &AdmissionToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Admission-Token", Err: err})
+			return
+		}
+
+		params.AdmissionToken = &AdmissionToken
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateHold(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// JoinQueue operation middleware
+func (siw *ServerInterfaceWrapper) JoinQueue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params JoinQueueParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.JoinQueue(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -963,6 +1090,32 @@ func (siw *ServerInterfaceWrapper) CancelOrder(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// GetQueueStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetQueueStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "token" -------------
+	var token string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "token", chi.URLParam(r, "token"), &token, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetQueueStatus(w, r, token)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -1102,6 +1255,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/v1/events/{id}/seatmap", wrapper.GetSeatMap)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/events/{id}/queue", wrapper.JoinQueue)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/v1/queue/{token}", wrapper.GetQueueStatus)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/v1/events/{id}/holds", wrapper.CreateHold)
@@ -1581,6 +1740,46 @@ func (response CreateHolddefaultJSONResponse) VisitCreateHoldResponse(w http.Res
 	return err
 }
 
+type JoinQueueRequestObject struct {
+	Id     ID `json:"id"`
+	Params JoinQueueParams
+}
+
+type JoinQueueResponseObject interface {
+	VisitJoinQueueResponse(w http.ResponseWriter) error
+}
+
+type JoinQueue200JSONResponse QueueStatus
+
+func (response JoinQueue200JSONResponse) VisitJoinQueueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type JoinQueuedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response JoinQueuedefaultJSONResponse) VisitJoinQueueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetSeatMapRequestObject struct {
 	Id ID `json:"id"`
 }
@@ -1826,6 +2025,45 @@ func (response CancelOrderdefaultJSONResponse) VisitCancelOrderResponse(w http.R
 	return err
 }
 
+type GetQueueStatusRequestObject struct {
+	Token string `json:"token"`
+}
+
+type GetQueueStatusResponseObject interface {
+	VisitGetQueueStatusResponse(w http.ResponseWriter) error
+}
+
+type GetQueueStatus200JSONResponse QueueStatus
+
+func (response GetQueueStatus200JSONResponse) VisitGetQueueStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetQueueStatusdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetQueueStatusdefaultJSONResponse) VisitGetQueueStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// Healthz Liveness; the process is up.
@@ -1864,6 +2102,9 @@ type StrictServerInterface interface {
 	// CreateHold Hold 1 to 8 seats for 10 minutes.
 	// (POST /v1/events/{id}/holds)
 	CreateHold(ctx context.Context, request CreateHoldRequestObject) (CreateHoldResponseObject, error)
+	// JoinQueue Join the waiting room for a high-demand event.
+	// (POST /v1/events/{id}/queue)
+	JoinQueue(ctx context.Context, request JoinQueueRequestObject) (JoinQueueResponseObject, error)
 
 	// (GET /v1/events/{id}/seatmap)
 	GetSeatMap(ctx context.Context, request GetSeatMapRequestObject) (GetSeatMapResponseObject, error)
@@ -1882,6 +2123,9 @@ type StrictServerInterface interface {
 	// CancelOrder Cancel a confirmed order before the event and refund it.
 	// (POST /v1/orders/{id}/cancel)
 	CancelOrder(ctx context.Context, request CancelOrderRequestObject) (CancelOrderResponseObject, error)
+	// GetQueueStatus Poll your place in the waiting room; returns an admission token once admitted.
+	// (GET /v1/queue/{token})
+	GetQueueStatus(ctx context.Context, request GetQueueStatusRequestObject) (GetQueueStatusResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -2269,6 +2513,33 @@ func (sh *strictHandler) CreateHold(w http.ResponseWriter, r *http.Request, id I
 	}
 }
 
+// JoinQueue operation middleware
+func (sh *strictHandler) JoinQueue(w http.ResponseWriter, r *http.Request, id ID, params JoinQueueParams) {
+	var request JoinQueueRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.JoinQueue(ctx, request.(JoinQueueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "JoinQueue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(JoinQueueResponseObject); ok {
+		if err := validResponse.VisitJoinQueueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetSeatMap operation middleware
 func (sh *strictHandler) GetSeatMap(w http.ResponseWriter, r *http.Request, id ID) {
 	var request GetSeatMapRequestObject
@@ -2428,55 +2699,89 @@ func (sh *strictHandler) CancelOrder(w http.ResponseWriter, r *http.Request, id 
 	}
 }
 
+// GetQueueStatus operation middleware
+func (sh *strictHandler) GetQueueStatus(w http.ResponseWriter, r *http.Request, token string) {
+	var request GetQueueStatusRequestObject
+
+	request.Token = token
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetQueueStatus(ctx, request.(GetQueueStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetQueueStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetQueueStatusResponseObject); ok {
+		if err := validResponse.VisitGetQueueStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

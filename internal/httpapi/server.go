@@ -27,6 +27,7 @@ import (
 	"ticket/internal/idempotency"
 	"ticket/internal/inventory"
 	"ticket/internal/ratelimit"
+	"ticket/internal/waitingroom"
 )
 
 // Deps are the collaborators the HTTP layer needs.
@@ -37,6 +38,7 @@ type Deps struct {
 	Inventory *inventory.Service
 	Booking   *booking.Service
 	Cache     *cache.Cache
+	Room      *waitingroom.Room
 	Limiter   *ratelimit.Limiter // nil disables rate limiting
 	// TrustProxy reads the client IP from X-Forwarded-For (set it only behind a
 	// proxy that overwrites that header, like the ingress).

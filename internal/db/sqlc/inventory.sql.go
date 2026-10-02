@@ -24,14 +24,18 @@ func (q *Queries) CountAvailableSeats(ctx context.Context, eventID uuid.UUID) (i
 }
 
 const createEvent = `-- name: CreateEvent :one
-INSERT INTO events (venue_id, name, starts_at, on_sale_at) VALUES ($1, $2, $3, $4) RETURNING id, venue_id, name, starts_at, on_sale_at, status, created_at
+INSERT INTO events (venue_id, name, starts_at, on_sale_at, queue_enabled, admit_batch, admit_interval_seconds)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, venue_id, name, starts_at, on_sale_at, status, created_at, queue_enabled, admit_batch, admit_interval_seconds
 `
 
 type CreateEventParams struct {
-	VenueID  uuid.UUID
-	Name     string
-	StartsAt time.Time
-	OnSaleAt time.Time
+	VenueID              uuid.UUID
+	Name                 string
+	StartsAt             time.Time
+	OnSaleAt             time.Time
+	QueueEnabled         bool
+	AdmitBatch           int32
+	AdmitIntervalSeconds int32
 }
 
 func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event, error) {
@@ -40,6 +44,9 @@ func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event
 		arg.Name,
 		arg.StartsAt,
 		arg.OnSaleAt,
+		arg.QueueEnabled,
+		arg.AdmitBatch,
+		arg.AdmitIntervalSeconds,
 	)
 	var i Event
 	err := row.Scan(
@@ -50,6 +57,9 @@ func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event
 		&i.OnSaleAt,
 		&i.Status,
 		&i.CreatedAt,
+		&i.QueueEnabled,
+		&i.AdmitBatch,
+		&i.AdmitIntervalSeconds,
 	)
 	return i, err
 }
@@ -118,7 +128,7 @@ func (q *Queries) CreateVenue(ctx context.Context, arg CreateVenueParams) (Venue
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, venue_id, name, starts_at, on_sale_at, status, created_at FROM events WHERE id = $1
+SELECT id, venue_id, name, starts_at, on_sale_at, status, created_at, queue_enabled, admit_batch, admit_interval_seconds FROM events WHERE id = $1
 `
 
 func (q *Queries) GetEvent(ctx context.Context, id uuid.UUID) (Event, error) {
@@ -132,6 +142,9 @@ func (q *Queries) GetEvent(ctx context.Context, id uuid.UUID) (Event, error) {
 		&i.OnSaleAt,
 		&i.Status,
 		&i.CreatedAt,
+		&i.QueueEnabled,
+		&i.AdmitBatch,
+		&i.AdmitIntervalSeconds,
 	)
 	return i, err
 }
@@ -225,7 +238,7 @@ func (q *Queries) ListOnSaleEventIDs(ctx context.Context) ([]uuid.UUID, error) {
 }
 
 const listPublicEvents = `-- name: ListPublicEvents :many
-SELECT id, venue_id, name, starts_at, on_sale_at, status, created_at FROM events
+SELECT id, venue_id, name, starts_at, on_sale_at, status, created_at, queue_enabled, admit_batch, admit_interval_seconds FROM events
 WHERE status <> 'draft'
   AND (starts_at, id) > ($1::timestamptz, $2::uuid)
 ORDER BY starts_at, id
@@ -256,7 +269,41 @@ func (q *Queries) ListPublicEvents(ctx context.Context, arg ListPublicEventsPara
 			&i.OnSaleAt,
 			&i.Status,
 			&i.CreatedAt,
+			&i.QueueEnabled,
+			&i.AdmitBatch,
+			&i.AdmitIntervalSeconds,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQueuedOnSaleEvents = `-- name: ListQueuedOnSaleEvents :many
+SELECT id, admit_batch, admit_interval_seconds FROM events
+WHERE status = 'on_sale' AND queue_enabled AND on_sale_at <= now() AND starts_at > now()
+`
+
+type ListQueuedOnSaleEventsRow struct {
+	ID                   uuid.UUID
+	AdmitBatch           int32
+	AdmitIntervalSeconds int32
+}
+
+func (q *Queries) ListQueuedOnSaleEvents(ctx context.Context) ([]ListQueuedOnSaleEventsRow, error) {
+	rows, err := q.db.Query(ctx, listQueuedOnSaleEvents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListQueuedOnSaleEventsRow
+	for rows.Next() {
+		var i ListQueuedOnSaleEventsRow
+		if err := rows.Scan(&i.ID, &i.AdmitBatch, &i.AdmitIntervalSeconds); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -292,7 +339,7 @@ func (q *Queries) ListSectionsByVenue(ctx context.Context, venueID uuid.UUID) ([
 }
 
 const publishEvent = `-- name: PublishEvent :one
-UPDATE events SET status = 'on_sale' WHERE id = $1 AND status = 'draft' RETURNING id, venue_id, name, starts_at, on_sale_at, status, created_at
+UPDATE events SET status = 'on_sale' WHERE id = $1 AND status = 'draft' RETURNING id, venue_id, name, starts_at, on_sale_at, status, created_at, queue_enabled, admit_batch, admit_interval_seconds
 `
 
 func (q *Queries) PublishEvent(ctx context.Context, id uuid.UUID) (Event, error) {
@@ -306,6 +353,9 @@ func (q *Queries) PublishEvent(ctx context.Context, id uuid.UUID) (Event, error)
 		&i.OnSaleAt,
 		&i.Status,
 		&i.CreatedAt,
+		&i.QueueEnabled,
+		&i.AdmitBatch,
+		&i.AdmitIntervalSeconds,
 	)
 	return i, err
 }

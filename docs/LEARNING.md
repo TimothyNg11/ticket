@@ -212,3 +212,35 @@ Each limit is a bucket holding up to `burst` tokens that refills at `rate` per s
 Buckets: reads 20/s (burst 40) per user or IP; logins 10/min and registrations 5/min per IP (slows credential stuffing); holds 5/min per user (each hold locks inventory); other writes 60/min per user. Going over returns `429 RATE_LIMITED` with `Retry-After`. If Redis is down, an in-process limiter takes over at a quarter of the allowance per pod, so protection degrades rather than disappearing (`TestFallsBackWhenRedisDown`).
 
 Per-IP limits need the real client IP. Behind the ingress, `X-Forwarded-For` lists every hop, and anything left of the last entry was supplied by the client and can be forged. With `TRUST_PROXY=true` the API uses the right-most entry, which the ingress itself appended (`TestClientIP`).
+
+## Phase 5: Waiting room
+
+### Why a queue at all
+
+Row locks keep a flash sale *correct*, but they don't keep it *fast*. If 50,000 people hit "hold" at once, Postgres must run 50,000 lock-acquiring transactions, the connection pool saturates, and everyone, winners included, waits. A waiting room turns that spike into a steady trickle: buyers line up, and an admitter lets in a fixed batch (default 500) every interval (default 10 s). The database only ever sees about one batch of buyers at a time, no matter how big the crowd.
+
+### The queue is a sorted set
+
+`internal/waitingroom` keeps one Redis sorted set per event: the member is the user id, and the score is the arrival time in milliseconds.
+
+- **Joining** runs a small Lua script: read the Redis server clock (`TIME`), `ZADD NX` the user with that score, and return `ZRANK`. `NX` means rejoining never moves you, so refreshing the page can't cost you your place. Using the server's clock means every API pod stamps arrivals on the same timeline: first come, first served really is first.
+- **Your position** is `ZRANK + 1`, an O(log n) lookup. The estimated wait is `ceil(position / batch) × interval`.
+- **Admitting** is `ZPOPMIN key 500`: atomically remove the 500 lowest scores (the earliest arrivals) and issue each an admission pass.
+
+### One batch per interval, however many admitters run
+
+The admitter (`workers admitter`) ticks every second, but before admitting it must win `SET admit-gate:{event} 1 NX PX <interval>`. Only one replica can set that key, and nobody can set it again until it expires one interval later. That one key is the cross-replica schedule; no leader election is needed (`TestConcurrentAdmittersAdmitOneBatch`: 5 simultaneous admitters, exactly one batch). If Redis is down, admission simply pauses. Nobody new gets in, which is the safe failure mode for a queue.
+
+### Passes that can't be forged, shared, or confused
+
+Joining returns a **queue token**; once admitted, polling returns an **admission token**. Both are signed JWTs (`internal/auth/typed.go`) that bind a user id *and* an event id, and expire (admission after 15 minutes).
+
+- *Can't be forged:* they're HMAC-signed.
+- *Can't be shared:* `CheckAdmission` requires the pass's user to equal the authenticated caller, so posting your admission token in a group chat helps nobody.
+- *Can't be confused:* every token the API signs carries a `typ` claim (`access`, `queue`, `admission`), and every verifier checks it. All three share a signing key, so without `typ` an admission pass (which has a valid user id as its subject) could be presented as an access token. `TestPassTypeIsEnforced` checks every pairing.
+
+### The gate
+
+For events with `queue_enabled`, `POST /v1/events/{id}/holds` requires an `Admission-Token` header and returns `403 ADMISSION_REQUIRED` otherwise. The gate sits in front of the database: refused requests never open a transaction. Holds still go through the normal row locks once inside. The queue controls *how many* people compete, and Postgres still decides *who wins*.
+
+`TestQueueBurst10000` is the Phase 5 "done when": 10,000 users join simultaneously, the admitter admits one batch of 500, then all 10,000 try to hold a seat. Exactly the 500 admitted users succeed, the other 9,500 get `403`, and the database shows 500 holds, all by admitted users.

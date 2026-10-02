@@ -22,6 +22,7 @@ type Claims struct {
 }
 
 type jwtClaims struct {
+	Type string `json:"typ"`
 	Role string `json:"role"`
 	jwt.RegisteredClaims
 }
@@ -44,6 +45,7 @@ func (ti *TokenIssuer) TTL() time.Duration { return ti.ttl }
 func (ti *TokenIssuer) Issue(userID uuid.UUID, role string) (string, error) {
 	now := time.Now()
 	c := jwtClaims{
+		Type: TypeAccess,
 		Role: role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID.String(),
@@ -62,7 +64,7 @@ func (ti *TokenIssuer) Verify(token string) (Claims, error) {
 	_, err := jwt.ParseWithClaims(token, &c, func(*jwt.Token) (any, error) { return ti.secret, nil },
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 		jwt.WithExpirationRequired())
-	if err != nil {
+	if err != nil || c.Type != TypeAccess {
 		return Claims{}, ErrInvalidToken
 	}
 	id, err := uuid.Parse(c.Subject)

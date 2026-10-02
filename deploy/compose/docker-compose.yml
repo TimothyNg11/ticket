@@ -95,5 +95,16 @@ services:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
 
+  admitter:
+    <<: *workers-image
+    command: ["admitter"]
+    environment:
+      DATABASE_URL: *db-url
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
 volumes:
   pgdata: {}

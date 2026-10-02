@@ -15,7 +15,8 @@ SELECT * FROM sections WHERE venue_id = $1 ORDER BY name;
 INSERT INTO seats (section_id, row_label, seat_number) VALUES ($1, $2, $3);
 
 -- name: CreateEvent :one
-INSERT INTO events (venue_id, name, starts_at, on_sale_at) VALUES ($1, $2, $3, $4) RETURNING *;
+INSERT INTO events (venue_id, name, starts_at, on_sale_at, queue_enabled, admit_batch, admit_interval_seconds)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
 
 -- name: CreateEventSeatsForSection :execrows
 INSERT INTO event_seats (event_id, seat_id, price_cents)
@@ -50,3 +51,7 @@ SELECT count(*) FROM event_seats WHERE event_id = $1 AND state = 'available';
 
 -- name: ListOnSaleEventIDs :many
 SELECT id FROM events WHERE status = 'on_sale' AND starts_at > now();
+
+-- name: ListQueuedOnSaleEvents :many
+SELECT id, admit_batch, admit_interval_seconds FROM events
+WHERE status = 'on_sale' AND queue_enabled AND on_sale_at <= now() AND starts_at > now();
