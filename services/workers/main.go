@@ -4,6 +4,8 @@
 //	workers sweeper        release expired holds every SWEEP_INTERVAL (default 15s)
 //	workers availability   recount seats per on-sale event into Redis every minute,
 //	                       correcting drift in the cached availability counters
+//	workers admitter       admit the next batch from each event's waiting room,
+//	                       once per the event's admission interval
 //
 // Every job is safe to run as several replicas at once: work is claimed with
 // FOR UPDATE SKIP LOCKED, so replicas never process the same row.
@@ -22,9 +24,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"ticket/internal/auth"
 	"ticket/internal/booking"
 	"ticket/internal/cache"
 	"ticket/internal/inventory"
+	"ticket/internal/waitingroom"
 )
 
 func main() {
@@ -81,6 +85,39 @@ func run(ctx context.Context, job string, log *slog.Logger) error {
 				log.Info("recomputed availability", "events", n)
 			}
 			return err
+		})
+	case "admitter":
+		ropt, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+		if err != nil {
+			return fmt.Errorf("REDIS_URL: %w", err)
+		}
+		rdb := redis.NewClient(ropt)
+		defer func() { _ = rdb.Close() }()
+		secret := []byte(os.Getenv("JWT_SECRET"))
+		if len(secret) < 32 {
+			return errors.New("JWT_SECRET must be at least 32 bytes")
+		}
+		room := waitingroom.New(rdb, auth.NewPassIssuer(secret))
+		inv := inventory.New(pool)
+		// Tick every second; each event's own interval is enforced inside
+		// AdmitNext by a Redis gate, so extra replicas can't admit faster. If Redis
+		// is down, AdmitNext fails and admission simply pauses: nobody new gets in.
+		return every(ctx, time.Second, log, func(ctx context.Context) error {
+			events, err := inv.QueuedEvents(ctx)
+			if err != nil {
+				return err
+			}
+			for _, ev := range events {
+				n, err := room.AdmitNext(ctx, ev.ID, waitingroom.Rate{Batch: ev.Batch, Interval: ev.Interval})
+				if err != nil {
+					return err
+				}
+				if n > 0 {
+					left, _ := room.Length(ctx, ev.ID)
+					log.Info("admitted batch", "event_id", ev.ID, "admitted", n, "waiting", left)
+				}
+			}
+			return nil
 		})
 	default:
 		return fmt.Errorf("unknown job %q", job)

@@ -32,6 +32,7 @@ import (
 	"ticket/internal/inventory"
 	"ticket/internal/payments"
 	"ticket/internal/ratelimit"
+	"ticket/internal/waitingroom"
 )
 
 func main() {
@@ -97,6 +98,7 @@ func serve(log *slog.Logger) error {
 			Inventory:  inv,
 			Booking:    book,
 			Cache:      c,
+			Room:       waitingroom.New(rdb, auth.NewPassIssuer(cfg.JWTSecret)),
 			Limiter:    limiter,
 			TrustProxy: cfg.TrustProxy,
 			Log:        log,

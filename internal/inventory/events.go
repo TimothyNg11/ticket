@@ -21,6 +21,15 @@ type EventSpec struct {
 	StartsAt      time.Time
 	OnSaleAt      time.Time
 	SectionPrices map[uuid.UUID]int32
+	// Queue, when Enabled, sends buyers through the waiting room.
+	Queue QueueSettings
+}
+
+// QueueSettings configure an event's waiting room.
+type QueueSettings struct {
+	Enabled         bool
+	Batch           int32 // users admitted per interval (default 500)
+	IntervalSeconds int32 // seconds between batches (default 10)
 }
 
 // SeatMap is every seat of an event grouped by section, with live state and price.
@@ -67,8 +76,16 @@ func (s *Service) CreateEvent(ctx context.Context, actor uuid.UUID, spec EventSp
 		if err := checkPrices(sections, spec.SectionPrices); err != nil {
 			return err
 		}
+		batch, interval := spec.Queue.Batch, spec.Queue.IntervalSeconds
+		if batch <= 0 {
+			batch = 500
+		}
+		if interval <= 0 {
+			interval = 10
+		}
 		e, err = q.CreateEvent(ctx, sqlc.CreateEventParams{
 			VenueID: spec.VenueID, Name: spec.Name, StartsAt: spec.StartsAt, OnSaleAt: spec.OnSaleAt,
+			QueueEnabled: spec.Queue.Enabled, AdmitBatch: batch, AdmitIntervalSeconds: interval,
 		})
 		if err != nil {
 			return err
@@ -187,4 +204,24 @@ func (s *Service) CountAvailable(ctx context.Context, id uuid.UUID) (int, error)
 // OnSaleEventIDs lists events currently on sale that haven't started.
 func (s *Service) OnSaleEventIDs(ctx context.Context) ([]uuid.UUID, error) {
 	return sqlc.New(s.pool).ListOnSaleEventIDs(ctx)
+}
+
+// QueuedEvent is an on-sale event with a waiting room.
+type QueuedEvent struct {
+	ID       uuid.UUID
+	Batch    int
+	Interval time.Duration
+}
+
+// QueuedEvents lists on-sale events whose waiting room is enabled.
+func (s *Service) QueuedEvents(ctx context.Context) ([]QueuedEvent, error) {
+	rows, err := sqlc.New(s.pool).ListQueuedOnSaleEvents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]QueuedEvent, len(rows))
+	for i, r := range rows {
+		out[i] = QueuedEvent{ID: r.ID, Batch: int(r.AdmitBatch), Interval: time.Duration(r.AdmitIntervalSeconds) * time.Second}
+	}
+	return out, nil
 }

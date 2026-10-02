@@ -118,8 +118,70 @@ func run() error {
 	if order.Status != "refunded" {
 		return fmt.Errorf("cancel: want refunded, got %s", order.Status)
 	}
+	return waitingRoom(admin, venue.ID, venue.Sections[0].ID, user)
+}
+
+// waitingRoom checks Phase 5 against the running admitter: holds on a queued event
+// are refused until the user joins the queue and is admitted.
+func waitingRoom(admin, venueID, sectionID, user string) error {
+	var event struct {
+		ID string `json:"id"`
+	}
+	if err := expect(201, &event, "POST", "/v1/admin/events", admin, map[string]any{
+		"venue_id": venueID, "name": "Smoke Queue Show",
+		"starts_at":      time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339),
+		"on_sale_at":     time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
+		"queue":          map[string]any{"enabled": true, "batch_size": 10, "interval_seconds": 1},
+		"section_prices": []map[string]any{{"section_id": sectionID, "price_cents": 2500}},
+	}); err != nil {
+		return fmt.Errorf("create queued event: %w", err)
+	}
+	if err := expect(200, nil, "POST", "/v1/admin/events/"+event.ID+"/publish", admin, nil); err != nil {
+		return fmt.Errorf("publish queued event: %w", err)
+	}
+	var sm struct {
+		Sections []struct {
+			Seats []struct {
+				ID string `json:"event_seat_id"`
+			} `json:"seats"`
+		} `json:"sections"`
+	}
+	if err := expect(200, &sm, "GET", "/v1/events/"+event.ID+"/seatmap", user, nil); err != nil {
+		return err
+	}
+	holdBody := map[string]any{"seat_ids": []string{sm.Sections[0].Seats[0].ID}}
+	if err := expect(403, nil, "POST", "/v1/events/"+event.ID+"/holds", user, holdBody); err != nil {
+		return fmt.Errorf("hold without admission must be refused: %w", err)
+	}
+
+	var q struct {
+		QueueToken     string `json:"queue_token"`
+		Admitted       bool   `json:"admitted"`
+		AdmissionToken string `json:"admission_token"`
+	}
+	if err := expect(200, &q, "POST", "/v1/events/"+event.ID+"/queue", user, nil); err != nil {
+		return fmt.Errorf("join queue: %w", err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for !q.Admitted {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("not admitted within 20s; is the admitter running?")
+		}
+		time.Sleep(500 * time.Millisecond)
+		if err := expect(200, &q, "GET", "/v1/queue/"+q.QueueToken, user, nil); err != nil {
+			return fmt.Errorf("queue status: %w", err)
+		}
+	}
+	admissionToken = q.AdmissionToken
+	defer func() { admissionToken = "" }()
+	if err := expect(201, nil, "POST", "/v1/events/"+event.ID+"/holds", user, holdBody); err != nil {
+		return fmt.Errorf("hold with admission: %w", err)
+	}
 	return nil
 }
+
+// admissionToken, when set, is sent as the Admission-Token header.
+var admissionToken string
 
 func login(email, pw string) (string, error) {
 	var tp struct {
@@ -163,6 +225,9 @@ func do(method, path, token string, body any) (int, []byte, error) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	req.Header.Set("Idempotency-Key", uuid.NewString())
+	if admissionToken != "" {
+		req.Header.Set("Admission-Token", admissionToken)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, nil, err

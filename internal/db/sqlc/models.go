@@ -20,13 +20,16 @@ type AuditLog struct {
 }
 
 type Event struct {
-	ID        uuid.UUID
-	VenueID   uuid.UUID
-	Name      string
-	StartsAt  time.Time
-	OnSaleAt  time.Time
-	Status    string
-	CreatedAt time.Time
+	ID                   uuid.UUID
+	VenueID              uuid.UUID
+	Name                 string
+	StartsAt             time.Time
+	OnSaleAt             time.Time
+	Status               string
+	CreatedAt            time.Time
+	QueueEnabled         bool
+	AdmitBatch           int32
+	AdmitIntervalSeconds int32
 }
 
 type EventSeat struct {

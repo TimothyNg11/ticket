@@ -26,6 +26,7 @@ import (
 	"ticket/internal/payments/mock"
 	"ticket/internal/ratelimit"
 	"ticket/internal/testutil"
+	"ticket/internal/waitingroom"
 )
 
 var pg *testutil.PG
@@ -69,6 +70,7 @@ func newTestEnvScaled(t *testing.T, scale float64) *testEnv {
 		Inventory: inv,
 		Booking:   book,
 		Cache:     c,
+		Room:      waitingroom.New(rdb, auth.NewPassIssuer(testSecret)),
 		// Tests send many requests from one IP; scale limits up so only the
 		// rate-limit tests (which use their own limiter) ever see a 429.
 		Limiter: ratelimit.New(rdb, scale, nil),
@@ -154,4 +156,12 @@ func TestInvalidPathUUIDIs400(t *testing.T) {
 	status, body := call(t, srv, "GET", "/v1/events/not-a-uuid", "", nil)
 	assert.Equal(t, 400, status)
 	assert.Equal(t, "VALIDATION_FAILED", errCode(t, body))
+}
+
+// jsonBody encodes v for a request body.
+func jsonBody(t *testing.T, v any) io.Reader {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return bytes.NewReader(b)
 }

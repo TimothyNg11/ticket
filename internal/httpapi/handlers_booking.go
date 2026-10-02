@@ -17,6 +17,9 @@ func (s *Server) CreateHold(ctx context.Context, req gen.CreateHoldRequestObject
 	if err := s.check(req.Body); err != nil {
 		return nil, err
 	}
+	if err := s.checkAdmission(ctx, user.UserID, req.Id, req.Params.AdmissionToken); err != nil {
+		return nil, err
+	}
 	h, err := s.Booking.CreateHold(ctx, user.UserID, req.Id, req.Body.SeatIds)
 	if err != nil {
 		return nil, err

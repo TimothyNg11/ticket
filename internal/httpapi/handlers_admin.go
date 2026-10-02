@@ -54,10 +54,20 @@ func (s *Server) AdminCreateEvent(ctx context.Context, req gen.AdminCreateEventR
 		}
 		prices[p.SectionId] = int32(p.PriceCents) //nolint:gosec // validated: max=10000000
 	}
-	e, err := s.Inventory.CreateEvent(ctx, admin.UserID, inventory.EventSpec{
+	spec := inventory.EventSpec{
 		VenueID: req.Body.VenueId, Name: req.Body.Name,
 		StartsAt: req.Body.StartsAt, OnSaleAt: req.Body.OnSaleAt, SectionPrices: prices,
-	})
+	}
+	if q := req.Body.Queue; q != nil {
+		spec.Queue.Enabled = q.Enabled != nil && *q.Enabled
+		if q.BatchSize != nil {
+			spec.Queue.Batch = int32(*q.BatchSize) //nolint:gosec // validated: max=100000
+		}
+		if q.IntervalSeconds != nil {
+			spec.Queue.IntervalSeconds = int32(*q.IntervalSeconds) //nolint:gosec // validated: max=3600
+		}
+	}
+	e, err := s.Inventory.CreateEvent(ctx, admin.UserID, spec)
 	if err != nil {
 		return nil, err
 	}
