@@ -17,6 +17,9 @@ func (s *Server) Healthz(ctx context.Context, _ gen.HealthzRequestObject) (gen.H
 // Readyz reports readiness: Postgres answers within a second. Failing readiness
 // takes the pod out of load balancing without restarting it.
 func (s *Server) Readyz(ctx context.Context, _ gen.ReadyzRequestObject) (gen.ReadyzResponseObject, error) {
+	if s.Draining != nil && s.Draining.Load() {
+		return nil, apperr.Unavailable("shutting down")
+	}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	if err := s.Pool.Ping(ctx); err != nil {

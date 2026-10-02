@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -81,17 +82,22 @@ func serve(log *slog.Logger) error {
 
 	inv := inventory.New(pool)
 	c := cache.New(rdb, inv, log)
-	book := booking.New(pool, payments.NewHTTPClient(cfg.PaymentsURL, 3*time.Second),
-		auth.NewTicketSigner(cfg.TicketSigningKey), cfg.HoldTTL)
+	// Retries are safe because every charge carries the order's idempotency key;
+	// the breaker makes checkout fail fast while the provider is down.
+	pay := payments.NewResilient(payments.NewHTTPClient(cfg.PaymentsURL, 3*time.Second),
+		payments.DefaultRetry, payments.NewBreaker(5, 10*time.Second), nil)
+	book := booking.New(pool, pay, auth.NewTicketSigner(cfg.TicketSigningKey), cfg.HoldTTL)
 	book.OnSeatsChanged(c.SeatsChanged)
 	limiter := ratelimit.New(rdb, cfg.RateLimitScale, func(err error) {
 		log.Warn("rate limiter falling back to in-process limits", "err", err)
 	})
 
 	tokens := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
+	var draining atomic.Bool
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewHandler(httpapi.Deps{
+			Draining:   &draining,
 			Pool:       pool,
 			Tokens:     tokens,
 			Accounts:   account.New(pool, tokens, cfg.RefreshTokenTTL, cfg.AdminEmails),
@@ -119,12 +125,20 @@ func serve(log *slog.Logger) error {
 		return err
 	case <-ctx.Done():
 	}
-	// Phase 6 hardens this (readiness flip, drain); for now finish in-flight requests.
+	// Graceful shutdown, in the order Kubernetes needs:
+	//  1. Fail readiness so the load balancer stops sending new requests. Endpoint
+	//     removal takes a few seconds to propagate, so keep serving meanwhile.
+	//  2. Stop accepting connections and let in-flight requests finish.
+	//  3. Close the database and Redis pools (deferred above).
+	draining.Store(true)
+	log.Info("draining", "delay", cfg.DrainDelay.String())
+	time.Sleep(cfg.DrainDelay)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	log.Info("shut down cleanly")
 	return nil
 }
 

@@ -74,6 +74,15 @@ type Order struct {
 	UpdatedAt      time.Time
 }
 
+type Outbox struct {
+	ID          int64
+	AggregateID uuid.UUID
+	EventType   string
+	Payload     []byte
+	CreatedAt   time.Time
+	PublishedAt *time.Time
+}
+
 type Payment struct {
 	ID             uuid.UUID
 	OrderID        uuid.UUID

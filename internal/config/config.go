@@ -28,6 +28,9 @@ type Config struct {
 	// TrustProxy reads client IPs from X-Forwarded-For. Enable only behind an
 	// ingress that sets that header.
 	TrustProxy bool
+	// DrainDelay is how long the API keeps serving after SIGTERM with readiness
+	// failing, so load balancers stop routing to it before it stops listening.
+	DrainDelay time.Duration
 	// AdminEmails lists (lower-cased) emails that receive the admin role when they
 	// register. It is how the first admin is bootstrapped; see docs/decisions/0002.
 	AdminEmails map[string]bool
@@ -75,6 +78,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	var err error
 	if c.HoldTTL, err = duration(getenv, "HOLD_TTL", 10*time.Minute); err != nil {
+		return Config{}, err
+	}
+	if c.DrainDelay, err = duration(getenv, "DRAIN_DELAY", 5*time.Second); err != nil {
 		return Config{}, err
 	}
 	if c.AccessTokenTTL, err = duration(getenv, "ACCESS_TOKEN_TTL", 15*time.Minute); err != nil {

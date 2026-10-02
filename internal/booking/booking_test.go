@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,11 +68,10 @@ func newEnv(t *testing.T, seats int, pay payments.Client) *env {
 	}
 }
 
-var userN int
+var userN atomic.Int64 // tests create users from many goroutines at once
 
 func (e *env) user(t *testing.T) uuid.UUID {
-	userN++
-	return testutil.CreateUser(t, e.pool, fmt.Sprintf("u%d-%s@x.com", userN, uuid.NewString()[:6]), "user")
+	return testutil.CreateUser(t, e.pool, fmt.Sprintf("u%d-%s@x.com", userN.Add(1), uuid.NewString()[:6]), "user")
 }
 
 // seat returns (state, hold_id, order_id, version) of an event seat.

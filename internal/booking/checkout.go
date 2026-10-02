@@ -21,7 +21,14 @@ func ChargeKey(orderID uuid.UUID) string { return "charge-" + orderID.String() }
 
 func refundKey(orderID uuid.UUID) string { return "refund-" + orderID.String() }
 
-var errDeclined = apperr.Unprocessable("PAYMENT_DECLINED", "the payment was declined; your seats are still held, so you can retry")
+var (
+	errDeclined     = apperr.Unprocessable("PAYMENT_DECLINED", "the payment was declined; your seats are still held, so you can retry")
+	errPaymentsDown = &apperr.Error{Status: 503, Code: "PAYMENT_UNAVAILABLE", Message: "payments are temporarily unavailable; your seats are still held, so retry shortly"}
+)
+
+// readier is implemented by payment clients that can report an outage up front
+// (the circuit breaker in payments.Resilient).
+type readier interface{ Ready() error }
 
 // Checkout turns an active hold into an order and charges for it.
 //
@@ -30,6 +37,11 @@ var errDeclined = apperr.Unprocessable("PAYMENT_DECLINED", "the payment was decl
 // settles those later. A declined charge returns PAYMENT_DECLINED and leaves the
 // hold active for a retry.
 func (s *Service) Checkout(ctx context.Context, userID, holdID uuid.UUID, idemKey string) (Order, error) {
+	// Fail fast while the payment provider is known to be down, before creating
+	// an order that could only end up pending.
+	if r, ok := s.pay.(readier); ok && r.Ready() != nil {
+		return Order{}, errPaymentsDown
+	}
 	var order sqlc.Order
 	err := db.InTx(ctx, s.pool, func(q *sqlc.Queries) error {
 		// A retry that lost its stored HTTP response still finds its order here.
@@ -82,6 +94,14 @@ func (s *Service) Checkout(ctx context.Context, userID, holdID uuid.UUID, idemKe
 	// The transaction above has committed: no locks are held while we wait on the
 	// network. The order row itself is what stops a second checkout of this hold.
 	res, err := s.pay.Charge(ctx, ChargeKey(order.ID), int(order.TotalCents))
+	if errors.Is(err, payments.ErrCircuitOpen) {
+		// The breaker refused before anything was sent: nothing was charged, so the
+		// order can safely fail and the user can retry once payments recover.
+		if ferr := sqlc.New(s.pool).SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: order.ID, Status: "failed"}); ferr != nil {
+			return Order{}, ferr
+		}
+		return Order{}, errPaymentsDown
+	}
 	if errors.Is(err, payments.ErrUnknownOutcome) {
 		return s.loadOrder(ctx, order.ID)
 	}
@@ -146,7 +166,10 @@ func (s *Service) ApplyChargeResult(ctx context.Context, orderID uuid.UUID, res 
 			return err
 		}
 		eventID, sold = o.EventID, true
-		return q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "confirmed"})
+		if err := q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "confirmed"}); err != nil {
+			return err
+		}
+		return emit(ctx, q, "order.confirmed", o, map[string]any{"seats": len(seats)})
 	})
 	if err != nil {
 		return Order{}, err

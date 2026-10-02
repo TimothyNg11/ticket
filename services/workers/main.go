@@ -6,6 +6,10 @@
 //	                       correcting drift in the cached availability counters
 //	workers admitter       admit the next batch from each event's waiting room,
 //	                       once per the event's admission interval
+//	workers reconciler     settle orders stuck in pending_payment and retry failed
+//	                       refunds, every RECONCILE_INTERVAL (default 15s)
+//	workers outbox-relay   publish outbox rows to the "events" Redis Stream
+//	workers notifier       consume order events and send (log) notifications
 //
 // Every job is safe to run as several replicas at once: work is claimed with
 // FOR UPDATE SKIP LOCKED, so replicas never process the same row.
@@ -28,6 +32,8 @@ import (
 	"ticket/internal/booking"
 	"ticket/internal/cache"
 	"ticket/internal/inventory"
+	"ticket/internal/outbox"
+	"ticket/internal/payments"
 	"ticket/internal/waitingroom"
 )
 
@@ -72,11 +78,10 @@ func run(ctx context.Context, job string, log *slog.Logger) error {
 			}
 		})
 	case "availability":
-		ropt, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+		rdb, err := redisFromEnv()
 		if err != nil {
-			return fmt.Errorf("REDIS_URL: %w", err)
+			return err
 		}
-		rdb := redis.NewClient(ropt)
 		defer func() { _ = rdb.Close() }()
 		c := cache.New(rdb, inventory.New(pool), log)
 		return every(ctx, envDuration("AVAILABILITY_INTERVAL", time.Minute), log, func(ctx context.Context) error {
@@ -86,12 +91,63 @@ func run(ctx context.Context, job string, log *slog.Logger) error {
 			}
 			return err
 		})
-	case "admitter":
-		ropt, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+	case "reconciler":
+		pay := payments.NewResilient(payments.NewHTTPClient(os.Getenv("PAYMENTS_URL"), 3*time.Second),
+			payments.DefaultRetry, payments.NewBreaker(5, 10*time.Second), nil)
+		svc := booking.New(pool, pay, auth.NewTicketSigner([]byte(os.Getenv("TICKET_SIGNING_KEY"))), 0)
+		return every(ctx, envDuration("RECONCILE_INTERVAL", 15*time.Second), log, func(ctx context.Context) error {
+			// Only orders untouched for 30s: younger ones may still be mid-checkout.
+			r, err := svc.Reconcile(ctx, 30*time.Second, 200)
+			if r != (booking.ReconcileResult{}) {
+				log.Info("reconciled", "confirmed", r.Confirmed, "failed", r.Failed,
+					"still_pending", r.StillPending, "refunded", r.Refunded)
+			}
+			return err
+		})
+	case "outbox-relay":
+		rdb, err := redisFromEnv()
 		if err != nil {
-			return fmt.Errorf("REDIS_URL: %w", err)
+			return err
 		}
-		rdb := redis.NewClient(ropt)
+		defer func() { _ = rdb.Close() }()
+		relay := outbox.NewRelay(pool, rdb)
+		return every(ctx, envDuration("RELAY_INTERVAL", 500*time.Millisecond), log, func(ctx context.Context) error {
+			for {
+				n, err := relay.PublishBatch(ctx, 500)
+				if err != nil || n < 500 {
+					return err
+				}
+			}
+		})
+	case "notifier":
+		rdb, err := redisFromEnv()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rdb.Close() }()
+		host, _ := os.Hostname()
+		c := outbox.NewConsumer(rdb, "notifier", host, outbox.Once(rdb, "notifier", func(ctx context.Context, e outbox.Event) error {
+			// Out of scope per the spec: notifications are logged, not emailed.
+			log.InfoContext(ctx, "notification sent", "type", e.Type, "event_id", e.ID,
+				"order_id", e.Payload["order_id"], "user_id", e.Payload["user_id"])
+			return nil
+		}), log)
+		if err := c.Ensure(ctx); err != nil {
+			return err
+		}
+		log.Info("started")
+		for ctx.Err() == nil {
+			if _, err := c.Poll(ctx, 100, 2*time.Second); err != nil && ctx.Err() == nil {
+				log.Error("poll failed", "err", err)
+				time.Sleep(time.Second)
+			}
+		}
+		return nil
+	case "admitter":
+		rdb, err := redisFromEnv()
+		if err != nil {
+			return err
+		}
 		defer func() { _ = rdb.Close() }()
 		secret := []byte(os.Getenv("JWT_SECRET"))
 		if len(secret) < 32 {
@@ -148,4 +204,12 @@ func envDuration(key string, def time.Duration) time.Duration {
 		return d
 	}
 	return def
+}
+
+func redisFromEnv() (*redis.Client, error) {
+	opt, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+	if err != nil {
+		return nil, fmt.Errorf("REDIS_URL: %w", err)
+	}
+	return redis.NewClient(opt), nil
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,11 +41,12 @@ const testAdminEmail = "admin@example.com"
 
 // testEnv is a full API over its own database, with a mock payment provider.
 type testEnv struct {
-	srv    *httptest.Server
-	pool   *pgxpool.Pool
-	tokens *auth.TokenIssuer
-	pay    *mock.Server
-	cache  *cache.Cache
+	srv      *httptest.Server
+	pool     *pgxpool.Pool
+	tokens   *auth.TokenIssuer
+	pay      *mock.Server
+	cache    *cache.Cache
+	draining *atomic.Bool
 }
 
 func newTestEnv(t *testing.T) *testEnv { return newTestEnvScaled(t, 1000) }
@@ -63,6 +65,7 @@ func newTestEnvScaled(t *testing.T, scale float64) *testEnv {
 	book := booking.New(pool, payments.NewHTTPClient(paySrv.URL, time.Second),
 		auth.NewTicketSigner([]byte("ticket-signing-key-ticket-signing-key")), 10*time.Minute)
 	book.OnSeatsChanged(c.SeatsChanged)
+	var draining atomic.Bool
 	h := NewHandler(Deps{
 		Pool:      pool,
 		Tokens:    tokens,
@@ -71,6 +74,7 @@ func newTestEnvScaled(t *testing.T, scale float64) *testEnv {
 		Booking:   book,
 		Cache:     c,
 		Room:      waitingroom.New(rdb, auth.NewPassIssuer(testSecret)),
+		Draining:  &draining,
 		// Tests send many requests from one IP; scale limits up so only the
 		// rate-limit tests (which use their own limiter) ever see a 429.
 		Limiter: ratelimit.New(rdb, scale, nil),
@@ -78,7 +82,7 @@ func newTestEnvScaled(t *testing.T, scale float64) *testEnv {
 	})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return &testEnv{srv: srv, pool: pool, tokens: tokens, pay: pay, cache: c}
+	return &testEnv{srv: srv, pool: pool, tokens: tokens, pay: pay, cache: c, draining: &draining}
 }
 
 func newTestServer(t *testing.T) *httptest.Server { return newTestEnv(t).srv }

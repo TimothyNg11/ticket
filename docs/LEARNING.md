@@ -244,3 +244,57 @@ Joining returns a **queue token**; once admitted, polling returns an **admission
 For events with `queue_enabled`, `POST /v1/events/{id}/holds` requires an `Admission-Token` header and returns `403 ADMISSION_REQUIRED` otherwise. The gate sits in front of the database: refused requests never open a transaction. Holds still go through the normal row locks once inside. The queue controls *how many* people compete, and Postgres still decides *who wins*.
 
 `TestQueueBurst10000` is the Phase 5 "done when": 10,000 users join simultaneously, the admitter admits one batch of 500, then all 10,000 try to hold a seat. Exactly the 500 admitted users succeed, the other 9,500 get `403`, and the database shows 500 holds, all by admitted users.
+
+## Phase 6: Reliability
+
+Every failure mode in the spec's reliability table now has a mechanism and a test. This phase is about the payment path, where mistakes cost money, and about moving events out of the database without losing them.
+
+### Retries are only safe with idempotency keys
+
+`payments.Resilient` retries calls whose outcome is unknown (timeouts, 5xx), up to three attempts. Retrying a *charge* would be reckless if the first attempt might have succeeded. That's exactly what the mock simulates: it sometimes records the charge and then fails the response. It's safe here because every charge carries `charge-<order id>` as its idempotency key, so the provider returns the original charge instead of making a new one (`TestRetryAgainstFlakyProviderChargesOnce`). Definite answers (declined, not found) are never retried, and an exhausted retry stays "unknown", never "declined" (`TestGivesUpAsUnknown`).
+
+Backoff is exponential with **full jitter**: wait a random time between 0 and `base × 2^attempt`. Without jitter, every client that failed at the same moment retries at the same moment, in waves that can knock a recovering provider over again.
+
+### The circuit breaker
+
+When the provider is down, every checkout would otherwise wait out a 3-second timeout three times, holding a goroutine and a connection the whole while. With thousands of buyers that exhausts the API. The breaker (`payments.Breaker`) counts consecutive failures:
+
+- **Closed**: calls go through. After 5 consecutive provider failures it opens.
+- **Open**: calls fail immediately with `ErrCircuitOpen`, and checkout returns `503 PAYMENT_UNAVAILABLE` before creating an order. The buyer's hold survives so they can retry (`TestCircuitOpenFailsFastWithoutOrders`).
+- **Half-open**: after a 10 s cooldown, exactly one probe call is allowed. Success closes the circuit; failure reopens it (`TestBreakerOpensFailsFastAndRecovers`, `TestFailedProbeReopens`).
+
+Only provider trouble counts as failure. A decline is a healthy provider saying no.
+
+### The reconciler: making "unknown" impossible to leave behind
+
+Phase 2 left orders in `pending_payment` when the outcome was unknown. `workers reconciler` (`booking.Reconcile`) settles them. Every 15 s it takes pending orders untouched for 30 s and **repeats the charge with the same idempotency key**. If the original reached the provider, the provider returns it; if not, this attempt is the first. Either way exactly one charge exists afterwards, and its definite answer confirms or fails the order. The same pass retries refunds for orders that were cancelled while the provider was down.
+
+`TestPaymentChaosNeverLosesOrDoubleCharges` is the Phase 6 "done when". Sixty buyers check out against a provider that fails 30% of calls (half of them *after* charging), declines 10%, and is slower than the timeout 20% of the time. Then the reconciler runs until nothing is pending, and the test compares the provider's ledger with the orders table:
+
+- every confirmed order has a succeeded charge;
+- no failed order has a succeeded charge (no lost money);
+- every succeeded charge belongs to a confirmed order (no orphaned charges);
+- nothing is left pending, and every database invariant holds.
+
+### The transactional outbox
+
+When an order is confirmed, someone should be notified. The naive version (commit, then publish to a queue) has two failure windows: crash after the commit but before publishing, and the notification is lost; publish but then the commit fails, and you announce an order that doesn't exist.
+
+The outbox closes both: `booking.emit` inserts the event into the `outbox` table *inside the same transaction* as the order change, so the event exists if and only if the change committed. Separately, `workers outbox-relay` publishes unpublished rows to a Redis Stream and marks them published (`SKIP LOCKED` again lets several relays run; `TestConcurrentRelaysDontDoublePublish`).
+
+The remaining gap is a crash between publishing and marking, which publishes the batch twice. So delivery is **at-least-once**, and consumers must be idempotent. The notifier wraps its handler in `outbox.Once`, which records each event id with `SET NX` before handling (`TestCrashAfterPublishDuplicatesButHandledOnce`: each event delivered twice, handled once).
+
+### Consumer groups
+
+The notifier reads the stream as a Redis Streams *consumer group*: each event goes to one member, and stays "pending" until that member acknowledges it (`XACK`) after handling succeeds. If a notifier crashes mid-event, the event isn't lost: after a minute idle, another member takes it over with `XAUTOCLAIM` (`TestFailedHandlerIsRetriedAndCrashedConsumerReclaimed`).
+
+### Graceful shutdown
+
+Kubernetes stops a pod by sending SIGTERM, removing it from the Service's endpoints *at roughly the same time*, and sending SIGKILL after the grace period. If the API stopped listening at SIGTERM, requests routed in the next second or two (before endpoint removal propagates) would fail. So on SIGTERM the API:
+
+1. flips `/readyz` to 503 while staying live and still serving (`TestDrainingFailsReadinessOnly`);
+2. waits `DRAIN_DELAY` (5 s) for the load balancer to stop routing to it;
+3. calls `http.Server.Shutdown`, which stops accepting connections and waits for in-flight requests;
+4. closes the database and Redis pools.
+
+Workers stop at their next tick, and any transaction cut short by cancellation simply rolls back. Every job is idempotent, so the next run picks up where it left off.
