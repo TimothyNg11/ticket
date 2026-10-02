@@ -298,3 +298,57 @@ Kubernetes stops a pod by sending SIGTERM, removing it from the Service's endpoi
 4. closes the database and Redis pools.
 
 Workers stop at their next tick, and any transaction cut short by cancellation simply rolls back. Every job is idempotent, so the next run picks up where it left off.
+
+## Phase 7: Kubernetes
+
+### The shape of the deployment
+
+`deploy/helm/ticket` packages everything; `deploy/kind/up.sh` builds a three-node local cluster and installs it. Each component maps to a Kubernetes object chosen for what it needs:
+
+| Component | Object | Why |
+| --- | --- | --- |
+| API | Deployment + Service + HPA + PodDisruptionBudget | Stateless and interchangeable, so scale it horizontally and let any pod die |
+| Each worker job | Its own Deployment | Scale and restart jobs independently; every job is safe as multiple replicas |
+| Postgres, Redis (local) | StatefulSet + PersistentVolumeClaim | Stable identity and disk that survives restarts; managed services in the cloud |
+| PgBouncer | Deployment | Stateless proxy; two replicas for availability |
+| Ingress | Traefik + `Ingress` + cert-manager | TLS termination and routing; only `/v1` is exposed |
+
+### Probes and rollouts
+
+- **Liveness** (`/healthz`) only answers "is the process alive?". If it checked the database, a database blip would make Kubernetes restart every healthy API pod at once and turn a small incident into a full outage.
+- **Readiness** (`/readyz`) answers "should this pod get traffic?" It checks Postgres and fails during shutdown (Phase 6), so a pod leaves the Service before it stops.
+- **Rolling updates** use `maxUnavailable: 0`: a new pod must be ready before an old one goes, so capacity never dips during a deploy.
+- **PodDisruptionBudget** `minAvailable: 2`: node drains and cluster upgrades can't take the API below two pods.
+- **HPA** scales on CPU from 3 up to 20 pods, scaling up immediately and down slowly (5-minute window), because on-sales spike in seconds.
+
+### Migrations before traffic
+
+Each API pod runs `api migrate` as an **init container** before the server starts, so a pod can never serve with an older schema than its code expects. Several pods starting at once is safe: golang-migrate takes a Postgres advisory lock, so one migrates and the others find nothing to do. This only works if every migration is backward compatible with the previous release (expand, then contract in a later release), because old pods keep serving while new ones roll out. ADR 0008 records this.
+
+### PgBouncer and transaction pooling
+
+Each Postgres connection is a whole OS process with megabytes of memory; a few hundred is the practical ceiling. Twenty API pods with a 10-connection pool each, plus workers, would already be there. PgBouncer sits in between in **transaction pooling** mode: a real server connection is lent to a client only for the length of one transaction, so 2,000 client connections share 40 server connections.
+
+Transaction pooling has a catch: anything that lives in a *session* breaks. Two things here depend on that:
+
+- pgx uses protocol-level prepared statements. PgBouncer 1.21+ tracks those per server connection (`max_prepared_statements`), so they work.
+- golang-migrate's advisory lock is session-level. That's why migrations connect straight to Postgres, not through PgBouncer.
+
+### Security in the manifests
+
+- Every Go container runs as a non-root user with a read-only root filesystem, no Linux capabilities, no privilege escalation, and the RuntimeDefault seccomp profile.
+- No component talks to the Kubernetes API, so service account tokens aren't even mounted.
+- Secrets come from a Kubernetes Secret created outside the chart. `DATABASE_URL` is assembled at runtime with `$(POSTGRES_PASSWORD)` expansion, so the password never appears in a ConfigMap or the rendered manifest. PgBouncer's auth file is likewise written from the Secret by an init container into memory.
+- **NetworkPolicies** start from default-deny and then allow only specific paths: the ingress controller → API; API → Postgres (migrations only) and PgBouncer; workers → PgBouncer and Redis; API and reconciler → payments. These are verified, not just applied: a probe pod showed unlabeled pods blocked from Postgres, Redis and payments, and workers allowed to PgBouncer and Redis but not Postgres.
+
+### A bug only the cluster could find
+
+The first pod-kill test failed with 503s, and the cause wasn't the pod kills at all: API pods were **OOMKilled**. Argon2id deliberately uses 19 MiB per password hash. Registering hundreds of buyers meant a dozen hashes running at once in one pod, 228 MiB on top of the baseline, past the 256 MiB limit. Unit tests never saw it because they don't run under a memory limit. The fixes:
+
+- `auth.SetHashConcurrency`: at most 4 hashes run at once per pod, and the rest queue for milliseconds (`TestHashingConcurrencyIsBounded`).
+- `GOMEMLIMIT` is set from the container's memory limit (via the downward API), so the Go garbage collector works harder before the kernel kills the process.
+- The readiness probe timeout went from 1 s to 3 s, so a CPU-throttled pod doesn't flap out of the load balancer.
+
+### The test
+
+`deploy/kind/kill-api-during-sale.sh` runs `tools/flashsale` through the ingress for 60 seconds (300 buyers, 150 seats) and deletes a random API pod every 15 seconds. The flashsale client retries transport errors and 502/503/504 with the *same* Idempotency-Key, as a well-behaved client would. Result: 3 pods deleted, 161 orders confirmed, 11 cancelled, **0 failed operations, 0 retries needed** (graceful draining moved traffic before each pod stopped), and 0 invariant violations. CI runs the same test on every pull request.

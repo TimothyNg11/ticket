@@ -32,6 +32,7 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, 10*time.Minute, c.HoldTTL)
 	assert.Equal(t, "http://payments:8081", c.PaymentsURL)
 	assert.InDelta(t, 1.0, c.RateLimitScale, 0)
+	assert.Equal(t, 4, c.HashConcurrency)
 	assert.False(t, c.TrustProxy)
 }
 

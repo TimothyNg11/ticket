@@ -87,3 +87,23 @@ func (s *Server) AdminPublishEvent(ctx context.Context, req gen.AdminPublishEven
 	s.Cache.EventChanged(ctx, e.ID)
 	return gen.AdminPublishEvent200JSONResponse(toEvent(e)), nil
 }
+
+// AdminInvariants reports violations of the core guarantees. Load and chaos tests
+// call it after every run; anything but zero is a correctness bug.
+func (s *Server) AdminInvariants(ctx context.Context, _ gen.AdminInvariantsRequestObject) (gen.AdminInvariantsResponseObject, error) {
+	if _, err := requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	v, err := s.Booking.CheckInvariants(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return gen.AdminInvariants200JSONResponse{
+		Total:                             v.Total(),
+		SeatsWithMultipleValidTickets:     v.SeatsWithMultipleValidTickets,
+		SoldSeatsWithoutConfirmedOrder:    v.SoldSeatsWithoutConfirmedSale,
+		ConfirmedOrdersTicketMismatch:     v.ConfirmedOrdersTicketMismatch,
+		ConfirmedOrdersNotPaidExactlyOnce: v.ConfirmedOrdersNotPaidOnce,
+		HeldSeatsWithoutActiveHold:        v.HeldSeatsWithoutActiveHold,
+	}, nil
+}

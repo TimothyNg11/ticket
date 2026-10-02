@@ -49,6 +49,16 @@ Check the whole flow end to end against the running stack:
 go run ./tools/smoke        # prints SMOKE OK
 ```
 
+## Run on Kubernetes (kind)
+
+Requires kind, kubectl, helm, and openssl as well.
+
+```bash
+deploy/kind/up.sh                              # 3-node cluster, Traefik, cert-manager, metrics-server, the chart
+BASE_URL=http://localhost go run ./tools/smoke # end-to-end through the ingress (https://localhost also works, self-signed)
+deploy/kind/kill-api-during-sale.sh 60         # 60s flash sale while deleting API pods; must end with zero failures
+```
+
 ## Run tests
 
 ```bash
@@ -90,6 +100,9 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | `internal/httpapi` | Router, middleware, handlers |
 | `internal/testutil` | Postgres test harness |
 | `deploy/compose` | Local Docker Compose stack |
+| `deploy/helm/ticket` | Helm chart (values for local kind and cloud) |
+| `deploy/kind` | kind cluster config, bootstrap script, pod-kill test |
+| `tools/flashsale` | Timed on-sale load + correctness check against a live deployment |
 | `tools/smoke` | End-to-end smoke check |
 
 ## Status
@@ -102,7 +115,7 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | 4 | Redis caching (versioned seat maps, stampede protection), token-bucket rate limits, access-token revocation | Done |
 | 5 | Waiting room: FCFS Redis queue, batch admission, signed admission passes gating holds | Done |
 | 6 | Reliability: retries + circuit breaker, transactional outbox, reconciler, graceful shutdown | Done |
-| 7 | Kubernetes | Pending |
+| 7 | Kubernetes: Helm chart, kind, probes, HPA, PDB, PgBouncer, NetworkPolicies, TLS ingress | Done |
 | 8 | Observability | Pending |
 | 9 | Load and chaos testing | Pending |
 | 10 | Delivery (GitOps) | Pending |

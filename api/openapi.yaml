@@ -167,6 +167,14 @@ paths:
       responses:
         "201": { description: Created (draft), content: { application/json: { schema: { $ref: "#/components/schemas/Event" } } } }
         default: { $ref: "#/components/responses/Error" }
+  /v1/admin/invariants:
+    get:
+      operationId: adminInvariants
+      summary: Count violations of the system's core guarantees (all must be zero).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Violation counts, content: { application/json: { schema: { $ref: "#/components/schemas/Invariants" } } } }
+        default: { $ref: "#/components/responses/Error" }
   /v1/admin/events/{id}/publish:
     post:
       operationId: adminPublishEvent
@@ -399,3 +407,13 @@ components:
         estimated_wait_seconds: { type: integer }
         admission_token: { type: string, description: Send as the Admission-Token header when holding seats. }
         admission_expires_at: { type: string, format: date-time }
+    Invariants:
+      type: object
+      required: [total, seats_with_multiple_valid_tickets, sold_seats_without_confirmed_order, confirmed_orders_ticket_mismatch, confirmed_orders_not_paid_exactly_once, held_seats_without_active_hold]
+      properties:
+        total: { type: integer }
+        seats_with_multiple_valid_tickets: { type: integer }
+        sold_seats_without_confirmed_order: { type: integer }
+        confirmed_orders_ticket_mismatch: { type: integer }
+        confirmed_orders_not_paid_exactly_once: { type: integer }
+        held_seats_without_active_hold: { type: integer }

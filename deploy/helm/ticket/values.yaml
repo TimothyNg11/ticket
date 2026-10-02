@@ -1,0 +1,108 @@
+# Defaults suit a small production-like deployment. values-local.yaml (kind) and
+# values-cloud.yaml override them.
+
+image:
+  registry: ghcr.io/timothyng11
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Secrets are never stored in this chart. Create a Secret with these keys
+# (deploy/kind/up.sh does locally; Sealed Secrets or External Secrets in the cloud):
+#   POSTGRES_PASSWORD, JWT_SECRET, TICKET_SIGNING_KEY
+existingSecret: ticket-secrets
+
+config:
+  adminEmails: ""
+  holdTTL: 10m
+  # Multiplies every rate limit. 1 in production; load tests raise it.
+  rateLimitScale: "1"
+  drainDelay: 5s
+
+api:
+  replicas: 3
+  # Memory: ~40 MiB baseline + 4 concurrent Argon2id hashes x 19 MiB + headroom.
+  resources:
+    requests: { cpu: 250m, memory: 192Mi }
+    limits: { cpu: "1", memory: 384Mi }
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    minAvailable: 2
+
+# One Deployment per background job. Every job is safe to run as several
+# replicas (SKIP LOCKED, consumer groups, Redis gates).
+workers:
+  - { name: sweeper, replicas: 1 }
+  - { name: availability, replicas: 1 }
+  - { name: admitter, replicas: 1 }
+  - { name: reconciler, replicas: 1 }
+  - { name: outbox-relay, replicas: 1 }
+  - { name: notifier, replicas: 1 }
+workerResources:
+  requests: { cpu: 50m, memory: 32Mi }
+  limits: { cpu: 500m, memory: 128Mi }
+
+payments:
+  enabled: true # the mock provider; a real deployment would point at a real one
+  replicas: 1
+  url: "" # defaults to the in-cluster mock
+  latencyMs: 50
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { cpu: 500m, memory: 64Mi }
+
+# In-cluster Postgres is for local clusters only; in the cloud use a managed
+# database and set postgres.enabled=false plus database.host.
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  storage: 2Gi
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi }
+database:
+  host: "" # defaults to the in-cluster postgres service
+  name: ticket
+  user: ticket
+
+pgbouncer:
+  enabled: true
+  image: edoburu/pgbouncer:v1.25.2-p0
+  replicas: 2
+  # Transaction pooling: a server connection is held only for the length of a
+  # transaction, so a few dozen Postgres connections serve thousands of clients.
+  poolMode: transaction
+  defaultPoolSize: 40
+  maxClientConn: 2000
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { cpu: 500m, memory: 64Mi }
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  url: "" # defaults to the in-cluster redis
+  resources:
+    requests: { cpu: 100m, memory: 64Mi }
+    limits: { cpu: "1", memory: 256Mi }
+
+ingress:
+  enabled: true
+  className: traefik
+  host: ticket.localhost
+  tls:
+    enabled: true
+    # selfSigned issues a certificate with a namespace-local cert-manager Issuer
+    # (local clusters). Otherwise set clusterIssuer, e.g. letsencrypt-prod.
+    selfSigned: true
+    clusterIssuer: ""
+
+networkPolicies:
+  enabled: true
+  # Namespace the ingress controller runs in (allowed to reach the API).
+  ingressNamespace: traefik
+  # Namespace Prometheus runs in (allowed to scrape /metrics), Phase 8.
+  monitoringNamespace: monitoring

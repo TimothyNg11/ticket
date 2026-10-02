@@ -1,0 +1,30 @@
+{{- range .Values.workers }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-{{ .name }}
+  labels: {{- include "ticket.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: worker-{{ .name }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: worker-{{ .name }} }
+  template:
+    metadata:
+      labels: {{- include "ticket.labels" $ | nindent 8 }}
+        app.kubernetes.io/name: worker-{{ .name }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- include "ticket.podSecurity" $ | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: {{ .name }}
+          image: {{ include "ticket.image" (dict "root" $ "name" "workers") }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: [{{ .name | quote }}]
+          env: {{- include "ticket.env" $ | nindent 12 }}
+          {{- include "ticket.containerSecurity" $ | nindent 10 }}
+          resources: {{- toYaml $.Values.workerResources | nindent 12 }}
+{{- end }}

@@ -1,0 +1,208 @@
+{{- if .Values.postgres.enabled }}
+# Local-only Postgres. In the cloud, use a managed database (values-cloud.yaml).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+    app.kubernetes.io/name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: postgres }
+  template:
+    metadata:
+      labels: {{- include "ticket.labels" . | nindent 8 }}
+        app.kubernetes.io/name: postgres
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70 # the postgres user in the alpine image
+        fsGroup: 70
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          args: ["-c", "max_connections=200", "-c", "shared_buffers=256MB"]
+          env:
+            - { name: POSTGRES_USER, value: {{ .Values.database.user }} }
+            - { name: POSTGRES_DB, value: {{ .Values.database.name }} }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: POSTGRES_PASSWORD } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ name: postgres, containerPort: 5432 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          readinessProbe:
+            exec: { command: [pg_isready, -U, {{ .Values.database.user }}, -d, {{ .Values.database.name }}] }
+            periodSeconds: 3
+          resources: {{- toYaml .Values.postgres.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: run, mountPath: /var/run/postgresql }
+      volumes:
+        - { name: run, emptyDir: {} }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: {{ .Values.postgres.storage }} } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: postgres }
+  ports: [{ name: postgres, port: 5432, targetPort: postgres }]
+{{- end }}
+{{- if .Values.pgbouncer.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+data:
+  pgbouncer.ini: |
+    [databases]
+    {{ .Values.database.name }} = host={{ include "ticket.dbHost" . }} port=5432 dbname={{ .Values.database.name }}
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = 5432
+    auth_type = scram-sha-256
+    auth_file = /etc/pgbouncer/userlist/userlist.txt
+    pool_mode = {{ .Values.pgbouncer.poolMode }}
+    default_pool_size = {{ .Values.pgbouncer.defaultPoolSize }}
+    max_client_conn = {{ .Values.pgbouncer.maxClientConn }}
+    ; pgx uses protocol-level prepared statements; PgBouncer 1.21+ can track
+    ; them per server connection in transaction mode.
+    max_prepared_statements = 200
+    server_reset_query = DISCARD ALL
+    ignore_startup_parameters = extra_float_digits
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+    app.kubernetes.io/name: pgbouncer
+spec:
+  replicas: {{ .Values.pgbouncer.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: pgbouncer }
+  template:
+    metadata:
+      labels: {{- include "ticket.labels" . | nindent 8 }}
+        app.kubernetes.io/name: pgbouncer
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        # Build the auth file from the secret at startup, so the password never
+        # lands in a ConfigMap.
+        - name: userlist
+          image: {{ .Values.pgbouncer.image }}
+          command: ["/bin/sh", "-c", 'printf "\"%s\" \"%s\"\n" "$DB_USER" "$DB_PASSWORD" > /etc/pgbouncer/userlist/userlist.txt']
+          env:
+            - { name: DB_USER, value: {{ .Values.database.user }} }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: POSTGRES_PASSWORD } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts: [{ name: userlist, mountPath: /etc/pgbouncer/userlist }]
+      containers:
+        - name: pgbouncer
+          image: {{ .Values.pgbouncer.image }}
+          command: ["pgbouncer", "/etc/pgbouncer/config/pgbouncer.ini"]
+          ports: [{ name: pgbouncer, containerPort: 5432 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          readinessProbe:
+            tcpSocket: { port: pgbouncer }
+            periodSeconds: 3
+          resources: {{- toYaml .Values.pgbouncer.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/pgbouncer/config }
+            - { name: userlist, mountPath: /etc/pgbouncer/userlist }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: config, configMap: { name: pgbouncer } }
+        - { name: userlist, emptyDir: { medium: Memory } }
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: pgbouncer }
+  ports: [{ name: pgbouncer, port: 5432, targetPort: pgbouncer }]
+{{- end }}
+{{- if .Values.redis.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+    app.kubernetes.io/name: redis
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: redis }
+  template:
+    metadata:
+      labels: {{- include "ticket.labels" . | nindent 8 }}
+        app.kubernetes.io/name: redis
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          # Append-only file so queues and streams survive a restart.
+          args: ["--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+          ports: [{ name: redis, containerPort: 6379 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          readinessProbe:
+            exec: { command: [redis-cli, ping] }
+            periodSeconds: 3
+          resources: {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts: [{ name: data, mountPath: /data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: redis }
+  ports: [{ name: redis, port: 6379, targetPort: redis }]
+{{- end }}

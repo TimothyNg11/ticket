@@ -1,0 +1,22 @@
+# kind: images are loaded straight into the nodes (deploy/kind/up.sh), so there
+# is no registry and nothing to pull.
+image:
+  registry: ""
+  tag: dev
+  pullPolicy: Never
+
+config:
+  adminEmails: admin@example.com
+  # Load and chaos tests register thousands of users from one machine.
+  rateLimitScale: "1000"
+
+api:
+  autoscaling:
+    maxReplicas: 6
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { cpu: "1", memory: 384Mi }
+
+ingress:
+  # Plain "localhost" so every client resolves it (Go does not resolve *.localhost).
+  host: localhost
