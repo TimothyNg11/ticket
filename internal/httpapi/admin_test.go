@@ -79,3 +79,15 @@ func TestAdminCreateVenueValidation(t *testing.T) {
 	assert.Equal(t, 400, status)
 	assert.Equal(t, "VALIDATION_FAILED", errCode(t, body))
 }
+
+func TestAdminInvariants(t *testing.T) {
+	srv := newTestServer(t)
+	admin := registerAndLogin(t, srv, testAdminEmail)
+	status, body := call(t, srv, "GET", "/v1/admin/invariants", admin.AccessToken, nil)
+	require.Equal(t, 200, status, string(body))
+	assert.Contains(t, string(body), `"total":0`)
+
+	user := registerAndLogin(t, srv, "user@example.com")
+	status, _ = call(t, srv, "GET", "/v1/admin/invariants", user.AccessToken, nil)
+	assert.Equal(t, 403, status)
+}

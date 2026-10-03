@@ -31,6 +31,8 @@ type Config struct {
 	// DrainDelay is how long the API keeps serving after SIGTERM with readiness
 	// failing, so load balancers stop routing to it before it stops listening.
 	DrainDelay time.Duration
+	// HashConcurrency caps simultaneous Argon2id computations (19 MiB each).
+	HashConcurrency int
 	// AdminEmails lists (lower-cased) emails that receive the admin role when they
 	// register. It is how the first admin is bootstrapped; see docs/decisions/0002.
 	AdminEmails map[string]bool
@@ -48,6 +50,7 @@ func Load(getenv func(string) string) (Config, error) {
 		RedisURL:         getenv("REDIS_URL"),
 		TrustProxy:       getenv("TRUST_PROXY") == "true",
 		RateLimitScale:   1,
+		HashConcurrency:  4,
 		AdminEmails:      map[string]bool{},
 	}
 	if c.HTTPAddr == "" {
@@ -68,6 +71,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.RedisURL == "" {
 		return Config{}, errors.New("REDIS_URL is required")
+	}
+	if v := getenv("ARGON2_CONCURRENCY"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("ARGON2_CONCURRENCY must be a positive integer, got %q", v)
+		}
+		c.HashConcurrency = n
 	}
 	if v := getenv("RATE_LIMIT_SCALE"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)

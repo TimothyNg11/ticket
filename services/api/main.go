@@ -73,6 +73,7 @@ func serve(log *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	auth.SetHashConcurrency(cfg.HashConcurrency)
 	ropt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("REDIS_URL: %w", err)

@@ -1,0 +1,22 @@
+# Local Kubernetes cluster for the ticketing system: one control plane and two
+# workers, with host ports 80/443 mapped to the ingress controller.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ticket
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - { containerPort: 80, hostPort: 80, protocol: TCP }
+      - { containerPort: 443, hostPort: 443, protocol: TCP }
+  - role: worker
+  - role: worker
+networking:
+  # Calico enforces NetworkPolicies; kind's default CNI (kindnet) does too as of
+  # kind 0.24+, so the default is kept.
+  disableDefaultCNI: false

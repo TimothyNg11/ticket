@@ -1,0 +1,28 @@
+# Managed cloud cluster (GKE/EKS): managed Postgres and Redis, real TLS.
+image:
+  registry: ghcr.io/timothyng11
+  pullPolicy: IfNotPresent
+
+postgres:
+  enabled: false
+database:
+  host: ticket-db.internal # managed Postgres (Cloud SQL / RDS) private address
+
+redis:
+  enabled: false
+  url: redis://ticket-cache.internal:6379/0 # managed Redis (Memorystore / ElastiCache)
+
+payments:
+  enabled: false
+  url: https://payments.example.com # a real provider
+
+ingress:
+  host: tickets.example.com
+  tls:
+    selfSigned: false
+    clusterIssuer: letsencrypt-prod
+
+api:
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 30

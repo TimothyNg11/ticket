@@ -1,0 +1,39 @@
+{{- if .Values.payments.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+    app.kubernetes.io/name: payments
+spec:
+  replicas: {{ .Values.payments.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: payments }
+  template:
+    metadata:
+      labels: {{- include "ticket.labels" . | nindent 8 }}
+        app.kubernetes.io/name: payments
+    spec:
+      {{- include "ticket.podSecurity" . | nindent 6 }}
+      containers:
+        - name: payments
+          image: {{ include "ticket.image" (dict "root" . "name" "payments-mock") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{ name: http, containerPort: 8081 }]
+          env:
+            - { name: LATENCY_MS, value: {{ .Values.payments.latencyMs | quote }} }
+          {{- include "ticket.containerSecurity" . | nindent 10 }}
+          resources: {{- toYaml .Values.payments.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: payments }
+  ports: [{ name: http, port: 8081, targetPort: http }]
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ticket
+description: Flash-sale ticketing system - API, background workers, mock payments, and (for local use) Postgres, PgBouncer and Redis.
+type: application
+version: 0.1.0
+appVersion: "0.7.0"

@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ticket
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+# No Kubernetes API access is needed by any component; tokens aren't mounted.
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+    app.kubernetes.io/name: api
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: api }
+  strategy:
+    type: RollingUpdate
+    # Never drop below the desired count during a rollout: a new pod must be
+    # ready before an old one is removed.
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 25% }
+  template:
+    metadata:
+      labels: {{- include "ticket.labels" . | nindent 8 }}
+        app.kubernetes.io/name: api
+    spec:
+      {{- include "ticket.podSecurity" . | nindent 6 }}
+      # DRAIN_DELAY (readiness off, still serving) + in-flight requests must fit.
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app.kubernetes.io/name: api } }
+      initContainers:
+        # Migrations run before the new pod can serve. They connect straight to
+        # Postgres: golang-migrate's session advisory lock (which makes concurrent
+        # pods safe) doesn't survive PgBouncer's transaction pooling.
+        - name: migrate
+          image: {{ include "ticket.image" (dict "root" . "name" "api") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [migrate]
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: POSTGRES_PASSWORD } }
+            - name: DATABASE_URL
+              value: postgres://{{ .Values.database.user }}:$(POSTGRES_PASSWORD)@{{ include "ticket.dbHost" . }}:5432/{{ .Values.database.name }}?sslmode=disable
+          {{- include "ticket.containerSecurity" . | nindent 10 }}
+          resources: {{- toYaml .Values.workerResources | nindent 12 }}
+      containers:
+        - name: api
+          image: {{ include "ticket.image" (dict "root" . "name" "api") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{ name: http, containerPort: 8080 }]
+          env: {{- include "ticket.env" . | nindent 12 }}
+          {{- include "ticket.containerSecurity" . | nindent 10 }}
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          # Liveness only asks "is the process alive"; a database outage must not
+          # make Kubernetes restart healthy pods.
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Readiness gates traffic: it fails while Postgres is unreachable and
+          # during shutdown, so the pod leaves the Service before it stops.
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 2
+            # A CPU-throttled pod can take over a second to answer; don't flap it
+            # out of the load balancer for that. Draining still leaves within ~4s,
+            # inside DRAIN_DELAY.
+            timeoutSeconds: 3
+            failureThreshold: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+    app.kubernetes.io/name: api
+spec:
+  selector: { app.kubernetes.io/name: api }
+  ports: [{ name: http, port: 80, targetPort: http }]
+{{- if .Values.api.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: api }
+  minReplicas: {{ .Values.api.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.api.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ .Values.api.autoscaling.targetCPUUtilizationPercentage }} }
+  behavior:
+    # On-sales spike in seconds: scale up immediately, scale down slowly.
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies: [{ type: Percent, value: 100, periodSeconds: 15 }]
+    scaleDown:
+      stabilizationWindowSeconds: 300
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  # Voluntary disruptions (node drains, upgrades) never take the API below this.
+  minAvailable: {{ .Values.api.pdb.minAvailable }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: api }

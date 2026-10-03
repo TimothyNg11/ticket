@@ -1,0 +1,88 @@
+{{- if .Values.networkPolicies.enabled }}
+# Default deny: no pod in the namespace accepts traffic unless a policy below
+# allows it. Each data store lists exactly who may talk to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# The API accepts traffic from the ingress controller, and from Prometheus for
+# scraping /metrics.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: api } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.ingressNamespace }} } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.monitoringNamespace }} } }
+      ports: [{ port: 8080 }]
+---
+# Postgres: only the API (whose init container runs migrations) and PgBouncer.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: api } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: pgbouncer } }
+      ports: [{ port: 5432 }]
+---
+# PgBouncer: the API and workers.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pgbouncer-ingress
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: pgbouncer } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: api } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: worker } }
+      ports: [{ port: 5432 }]
+---
+# Redis: the API and workers.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: redis } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: api } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: worker } }
+      ports: [{ port: 6379 }]
+---
+# The payment provider: only the components that charge or refund.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payments-ingress
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: payments } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: api } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: worker-reconciler } }
+      ports: [{ port: 8081 }]
+{{- end }}

@@ -1,0 +1,12 @@
+ticket {{ .Chart.AppVersion }} is deployed in namespace {{ .Release.Namespace }}.
+
+{{- if .Values.ingress.enabled }}
+API: http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}/v1/events
+{{- if .Values.ingress.tls.selfSigned }}
+(self-signed certificate: use curl -k or the flashsale tool's -insecure flag)
+{{- end }}
+{{- end }}
+
+Pods:      kubectl -n {{ .Release.Namespace }} get pods
+Smoke:     BASE_URL=https://{{ .Values.ingress.host }} go run ./tools/smoke
+Flashsale: go run ./tools/flashsale -base https://{{ .Values.ingress.host }} -insecure

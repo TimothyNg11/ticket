@@ -32,7 +32,8 @@ func HashPassword(pw string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := argon2.IDKey([]byte(pw), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	var key []byte
+	withHashSlot(func() { key = argon2.IDKey([]byte(pw), salt, argonTime, argonMemory, argonThreads, argonKeyLen) })
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, argonMemory, argonTime, argonThreads, b64.EncodeToString(salt), b64.EncodeToString(key)), nil
 }
@@ -57,6 +58,9 @@ func VerifyPassword(pw, encoded string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	got := argon2.IDKey([]byte(pw), salt, iters, mem, threads, uint32(len(want))) //nolint:gosec // len(want) is the stored key length (32)
+	var got []byte
+	withHashSlot(func() {
+		got = argon2.IDKey([]byte(pw), salt, iters, mem, threads, uint32(len(want))) //nolint:gosec // len(want) is the stored key length (32)
+	})
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }

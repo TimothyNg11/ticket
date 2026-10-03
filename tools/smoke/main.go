@@ -27,7 +27,7 @@ func main() {
 
 func run() error {
 	adminEmail := envOr("ADMIN_EMAIL", "admin@example.com")
-	adminPW := envOr("ADMIN_PASSWORD", "smoke-admin-password")
+	adminPW := envOr("ADMIN_PASSWORD", "local-admin-password")
 
 	// The admin may already exist from an earlier run; 409 is fine.
 	if code, body, err := do("POST", "/v1/auth/register", "", map[string]string{"email": adminEmail, "password": adminPW}); err != nil {

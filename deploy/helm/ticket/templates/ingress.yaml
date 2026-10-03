@@ -1,0 +1,42 @@
+{{- if .Values.ingress.enabled }}
+{{- if and .Values.ingress.tls.enabled .Values.ingress.tls.selfSigned }}
+# Local TLS: cert-manager issues a self-signed certificate for the host.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.ingress.tls.enabled }}
+    {{- if .Values.ingress.tls.selfSigned }}
+    cert-manager.io/issuer: selfsigned
+    {{- else }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
+    {{- end }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host }}]
+      secretName: api-tls
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          # Only the public API is exposed. /metrics and health checks stay
+          # cluster-internal (spec: internal-only endpoints not public).
+          - path: /v1
+            pathType: Prefix
+            backend: { service: { name: api, port: { name: http } } }
+{{- end }}
