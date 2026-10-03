@@ -24,5 +24,5 @@ func QuerySpanName(sql string) string {
 
 // NewDBTracer returns the pgx tracer every binary installs.
 func NewDBTracer() *otelpgx.Tracer {
-	return otelpgx.NewTracer(otelpgx.WithSpanNameFunc(QuerySpanName), otelpgx.WithDisableQuerySpanNamePrefix())
+	return otelpgx.NewTracer(otelpgx.WithSpanNameFunc(QuerySpanName))
 }
