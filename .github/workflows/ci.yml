@@ -16,7 +16,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with: { go-version-file: go.mod }
       - name: go vet
@@ -28,7 +28,7 @@ jobs:
     name: generated code is up to date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with: { go-version-file: go.mod }
       - uses: sqlc-dev/setup-sqlc@v4
@@ -41,7 +41,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with: { go-version-file: go.mod }
       # Integration tests start real Postgres containers through Testcontainers,
@@ -59,7 +59,7 @@ jobs:
     name: dependency scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
@@ -78,7 +78,7 @@ jobs:
       matrix:
         service: [api, workers, payments_mock]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: image name (registry paths must be lowercase)
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/ticket-${{ matrix.service }}" | tr '_' '-' >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@v3
@@ -109,7 +109,7 @@ jobs:
     needs: [lint, test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with: { go-version-file: go.mod }
       - name: generate throwaway secrets
@@ -135,7 +135,7 @@ jobs:
     name: helm chart and manifests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: azure/setup-helm@v4
       - name: helm lint (local and cloud values)
         run: |
@@ -162,7 +162,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with: { go-version-file: go.mod }
       - uses: azure/setup-helm@v4
