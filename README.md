@@ -41,7 +41,7 @@ cp .env.example .env        # then replace every value
 docker compose --env-file .env -f deploy/compose/docker-compose.yml up --build
 ```
 
-The API listens on `http://localhost:8080`. The OpenAPI contract is [`api/openapi.yaml`](api/openapi.yaml). Emails listed in `ADMIN_EMAILS` become admins when they register.
+The API listens on `http://localhost:8080`; Grafana (on-sale dashboard) on `:3000`, Prometheus on `:9090`, Jaeger traces on `:16686`. The OpenAPI contract is [`api/openapi.yaml`](api/openapi.yaml). Emails listed in `ADMIN_EMAILS` become admins when they register.
 
 Check the whole flow end to end against the running stack:
 
@@ -83,7 +83,7 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | --- | --- |
 | `api/openapi.yaml` | API contract (source of truth for HTTP types) |
 | `services/api` | API binary: `serve`, `migrate`, `healthcheck` |
-| `services/workers` | Background jobs: `sweeper`, `availability`, `admitter`, `reconciler`, `outbox-relay`, `notifier` |
+| `services/workers` | Background jobs: `sweeper`, `availability`, `admitter`, `reconciler`, `outbox-relay`, `notifier`, `invariants` |
 | `services/payments_mock` | Fake payment provider with injectable latency and failures |
 | `Dockerfile` | One image recipe for every service (`--build-arg SERVICE=…`) |
 | `internal/db` | Migrations (embedded), sqlc queries, transaction helpers |
@@ -96,11 +96,13 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | `internal/cache` | Redis cache-aside for seat maps and events, availability counters, token revocation |
 | `internal/waitingroom` | Virtual queue (Redis sorted set), batch admission, admission passes |
 | `internal/outbox` | Outbox relay to Redis Streams; consumer groups with dedup |
+| `internal/metrics`, `internal/observability` | Prometheus metrics; JSON logging with request/trace ids; OpenTelemetry setup |
 | `internal/ratelimit` | Token-bucket limits in an atomic Redis Lua script, with in-process fallback |
 | `internal/httpapi` | Router, middleware, handlers |
 | `internal/testutil` | Postgres test harness |
 | `deploy/compose` | Local Docker Compose stack |
 | `deploy/helm/ticket` | Helm chart (values for local kind and cloud) |
+| `deploy/observability` | Dashboard generator, alert-rule tests, latency-spike drill |
 | `deploy/kind` | kind cluster config, bootstrap script, pod-kill test |
 | `tools/flashsale` | Timed on-sale load + correctness check against a live deployment |
 | `tools/smoke` | End-to-end smoke check |
@@ -116,6 +118,6 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | 5 | Waiting room: FCFS Redis queue, batch admission, signed admission passes gating holds | Done |
 | 6 | Reliability: retries + circuit breaker, transactional outbox, reconciler, graceful shutdown | Done |
 | 7 | Kubernetes: Helm chart, kind, probes, HPA, PDB, PgBouncer, NetworkPolicies, TLS ingress | Done |
-| 8 | Observability | Pending |
+| 8 | Observability: Prometheus metrics, Grafana on-sale dashboard, JSON logs with request/trace ids, OpenTelemetry traces, tested alerts, invariant checker | Done |
 | 9 | Load and chaos testing | Pending |
 | 10 | Delivery (GitOps) | Pending |

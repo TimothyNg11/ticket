@@ -9,6 +9,7 @@ import (
 	"ticket/internal/apperr"
 	"ticket/internal/db"
 	"ticket/internal/db/sqlc"
+	"ticket/internal/metrics"
 	"ticket/internal/payments"
 )
 
@@ -94,6 +95,7 @@ func (s *Service) CancelOrder(ctx context.Context, userID, orderID uuid.UUID) (O
 	if err != nil {
 		return Order{}, err
 	}
+	metrics.Orders.WithLabelValues("cancelled").Inc()
 	s.onChange(o.EventID, int(released))
 	// The refund happens after commit, outside the transaction. A failure here is
 	// not the user's problem: the cancellation stands and the refund is retried.

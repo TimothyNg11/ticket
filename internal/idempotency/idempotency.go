@@ -23,6 +23,7 @@ import (
 
 	"ticket/internal/apperr"
 	"ticket/internal/db/sqlc"
+	"ticket/internal/metrics"
 )
 
 const (
@@ -171,6 +172,7 @@ func (g *Guard) Handler(next http.Handler) http.Handler {
 }
 
 func replay(w http.ResponseWriter, status int, body []byte) {
+	metrics.IdempotentReplays.Inc()
 	if len(body) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 	}

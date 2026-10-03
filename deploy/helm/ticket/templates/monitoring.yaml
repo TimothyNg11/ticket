@@ -1,0 +1,95 @@
+{{- if .Values.monitoring.enabled }}
+# Scrape the API's /metrics through its Service.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: { app.kubernetes.io/name: api }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 10s
+---
+# Workers have no Service; scrape their pods directly on the metrics port.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: workers
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: { app.kubernetes.io/component: worker }
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ticket
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+{{ .Files.Get "files/alerts.yaml" | indent 2 }}
+---
+# Picked up by the Grafana dashboard sidecar (label grafana_dashboard).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ticket-onsale-dashboard
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  onsale-dashboard.json: |-
+{{ .Files.Get "files/onsale-dashboard.json" | indent 4 }}
+{{- end }}
+{{- if .Values.tracing.enabled }}
+---
+# Jaeger all-in-one: receives OTLP spans and serves the trace UI. In-memory
+# storage; a production setup would use Tempo or Jaeger with a real backend.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+    app.kubernetes.io/name: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: jaeger }
+  template:
+    metadata:
+      labels: {{- include "ticket.labels" . | nindent 8 }}
+        app.kubernetes.io/name: jaeger
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: jaeger
+          image: {{ .Values.tracing.image }}
+          ports:
+            - { name: otlp-http, containerPort: 4318 }
+            - { name: ui, containerPort: 16686 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: jaeger }
+  ports:
+    - { name: otlp-http, port: 4318, targetPort: otlp-http }
+    - { name: ui, port: 16686, targetPort: ui }
+{{- end }}

@@ -19,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"ticket/internal/account"
 	"ticket/internal/apperr"
 	"ticket/internal/auth"
@@ -27,6 +29,7 @@ import (
 	"ticket/internal/httpapi/gen"
 	"ticket/internal/idempotency"
 	"ticket/internal/inventory"
+	"ticket/internal/metrics"
 	"ticket/internal/ratelimit"
 	"ticket/internal/waitingroom"
 )
@@ -66,7 +69,9 @@ func NewHandler(d Deps) http.Handler {
 		c, ok := userFrom(ctx)
 		return c.UserID, ok
 	}, s.writeError, d.Log)
-	r.Use(middleware.RequestID, s.recoverer, limitBody, s.authenticate, s.rateLimit, idem.Handler)
+	r.Use(middleware.RequestID, s.observe, s.recoverer, limitBody, s.authenticate, s.rateLimit, idem.Handler)
+	// Prometheus scrapes this; the ingress doesn't expose it publicly.
+	r.Handle("/metrics", metrics.Handler())
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) { s.writeError(w, r, apperr.NotFound("route")) })
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, &apperr.Error{Status: http.StatusMethodNotAllowed, Code: "METHOD_NOT_ALLOWED", Message: "method not allowed"})
@@ -85,13 +90,15 @@ func NewHandler(d Deps) http.Handler {
 		// A handler returned an error.
 		ResponseErrorHandlerFunc: s.writeError,
 	})
-	return gen.HandlerWithOptions(strict, gen.ChiServerOptions{
+	h := gen.HandlerWithOptions(strict, gen.ChiServerOptions{
 		BaseRouter: r,
 		// Path or query parameter could not be parsed (e.g. a non-UUID id).
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			s.writeError(w, r, apperr.Validation(err.Error()))
 		},
 	})
+	// One trace span per request, continuing the caller's trace if it sent one.
+	return otelhttp.NewHandler(h, "http.request")
 }
 
 type errorBody struct {

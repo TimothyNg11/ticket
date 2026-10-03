@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"ticket/internal/apperr"
+	"ticket/internal/metrics"
 	"ticket/internal/ratelimit"
 )
 
@@ -60,6 +61,7 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 		}
 		d := s.Limiter.Allow(r.Context(), rule, key)
 		if !d.Allowed {
+			metrics.RateLimited.WithLabelValues(rule.Name).Inc()
 			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(d.RetryAfter.Seconds()))))
 			s.writeError(w, r, &apperr.Error{Status: http.StatusTooManyRequests, Code: "RATE_LIMITED",
 				Message: "too many requests; retry after the time in the Retry-After header"})

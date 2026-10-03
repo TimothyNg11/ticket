@@ -73,3 +73,19 @@ func TestDrainingFailsReadinessOnly(t *testing.T) {
 	status, _ = call(t, e.srv, "GET", "/v1/events", "", nil)
 	assert.Equal(t, 200, status, "in-flight traffic is still served")
 }
+
+func TestMetricsUseRoutePatternsAndRequestIDHeader(t *testing.T) {
+	e := newTestEnv(t)
+	resp, err := e.srv.Client().Get(e.srv.URL + "/v1/events/00000000-0000-0000-0000-000000000009")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, 404, resp.StatusCode)
+	assert.NotEmpty(t, resp.Header.Get("X-Request-Id"), "clients can quote the request id")
+
+	status, body := call(t, e.srv, "GET", "/metrics", "", nil)
+	require.Equal(t, 200, status)
+	assert.Contains(t, string(body), `ticket_http_requests_total{method="GET",route="/v1/events/{id}",status="404"}`,
+		"labelled by route pattern, not by the raw id")
+	assert.NotContains(t, string(body), "00000000-0000-0000-0000-000000000009")
+	assert.Contains(t, string(body), "ticket_http_request_duration_seconds_bucket")
+}

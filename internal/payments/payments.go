@@ -58,6 +58,9 @@ func NewHTTPClient(baseURL string, timeout time.Duration) *HTTPClient {
 	return &HTTPClient{base: baseURL, hc: &http.Client{Timeout: timeout}}
 }
 
+// SetTransport replaces the HTTP transport (used to add tracing).
+func (c *HTTPClient) SetTransport(t http.RoundTripper) { c.hc.Transport = t }
+
 // Charge asks the provider to charge amountCents. Repeating a key returns the
 // original result instead of charging twice.
 func (c *HTTPClient) Charge(ctx context.Context, key string, amountCents int) (Result, error) {

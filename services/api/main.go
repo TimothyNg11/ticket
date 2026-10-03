@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"ticket/internal/account"
 	"ticket/internal/auth"
@@ -31,13 +33,14 @@ import (
 	"ticket/internal/db"
 	"ticket/internal/httpapi"
 	"ticket/internal/inventory"
+	"ticket/internal/observability"
 	"ticket/internal/payments"
 	"ticket/internal/ratelimit"
 	"ticket/internal/waitingroom"
 )
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := observability.NewLogger("api")
 	cmd := ""
 	if len(os.Args) > 1 {
 		cmd = os.Args[1]
@@ -67,11 +70,23 @@ func serve(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	shutdownTracing, err := observability.InitTracing(ctx, "ticket-api")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = shutdownTracing(context.Background()) }()
+
+	pcfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	pcfg.ConnConfig.Tracer = observability.NewDBTracer() // a span per query
+	pool, err := pgxpool.NewWithConfig(ctx, pcfg)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
+	observability.RegisterPoolMetrics(pool)
 
 	auth.SetHashConcurrency(cfg.HashConcurrency)
 	ropt, err := redis.ParseURL(cfg.RedisURL)
@@ -80,13 +95,17 @@ func serve(log *slog.Logger) error {
 	}
 	rdb := redis.NewClient(ropt)
 	defer func() { _ = rdb.Close() }()
+	if err := redisotel.InstrumentTracing(rdb); err != nil {
+		return err
+	}
 
 	inv := inventory.New(pool)
 	c := cache.New(rdb, inv, log)
 	// Retries are safe because every charge carries the order's idempotency key;
 	// the breaker makes checkout fail fast while the provider is down.
-	pay := payments.NewResilient(payments.NewHTTPClient(cfg.PaymentsURL, 3*time.Second),
-		payments.DefaultRetry, payments.NewBreaker(5, 10*time.Second), nil)
+	pay := payments.NewProductionClient(cfg.PaymentsURL, 3*time.Second, func(c *payments.HTTPClient) {
+		c.SetTransport(otelhttp.NewTransport(http.DefaultTransport)) // trace context to the provider
+	})
 	book := booking.New(pool, pay, auth.NewTicketSigner(cfg.TicketSigningKey), cfg.HoldTTL)
 	book.OnSeatsChanged(c.SeatsChanged)
 	limiter := ratelimit.New(rdb, cfg.RateLimitScale, func(err error) {

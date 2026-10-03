@@ -24,6 +24,7 @@ import (
 
 	"ticket/internal/db/sqlc"
 	"ticket/internal/inventory"
+	"ticket/internal/metrics"
 )
 
 // TTLs from the spec's caching table.
@@ -70,6 +71,7 @@ func jitter(d time.Duration) time.Duration {
 
 func (c *Cache) fail(ctx context.Context, op string, err error) {
 	c.Stats.Errors.Add(1)
+	metrics.CacheLookups.WithLabelValues(op, "error").Inc()
 	c.log.WarnContext(ctx, "cache unavailable, reading from database", "op", op, "err", err)
 }
 
@@ -89,9 +91,11 @@ func (c *Cache) SeatMap(ctx context.Context, eventID uuid.UUID) (inventory.SeatM
 	key := seatMapKey(eventID, ver)
 	if sm, ok := c.getSeatMap(ctx, key); ok {
 		c.Stats.Hits.Add(1)
+		metrics.CacheLookups.WithLabelValues("seatmap", "hit").Inc()
 		return sm, nil
 	}
 	c.Stats.Misses.Add(1)
+	metrics.CacheLookups.WithLabelValues("seatmap", "miss").Inc()
 
 	v, err, _ := c.sf.Do(key, func() (any, error) {
 		// Check again: a request that missed just before another flight finished
@@ -104,6 +108,7 @@ func (c *Cache) SeatMap(ctx context.Context, eventID uuid.UUID) (inventory.SeatM
 			// Another pod is rebuilding: serve the last known map if there is one.
 			if sm, ok := c.getSeatMap(ctx, seatMapStaleKey(eventID)); ok {
 				c.Stats.StaleServed.Add(1)
+				metrics.CacheLookups.WithLabelValues("seatmap", "stale").Inc()
 				return sm, nil
 			}
 		}

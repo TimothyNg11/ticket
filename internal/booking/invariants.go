@@ -54,3 +54,10 @@ func (s *Service) CheckInvariants(ctx context.Context) (Violations, error) {
 	}
 	return v, nil
 }
+
+// ActiveHolds counts holds currently active (exported as a gauge).
+func (s *Service) ActiveHolds(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM holds WHERE status = 'active'`).Scan(&n)
+	return n, err
+}

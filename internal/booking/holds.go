@@ -10,6 +10,7 @@ import (
 	"ticket/internal/apperr"
 	"ticket/internal/db"
 	"ticket/internal/db/sqlc"
+	"ticket/internal/metrics"
 )
 
 // CreateHold claims seats for userID for holdTTL. It either holds every requested
@@ -51,8 +52,12 @@ func (s *Service) CreateHold(ctx context.Context, userID, eventID uuid.UUID, sea
 		out = Hold{ID: h.ID, EventID: eventID, SeatIDs: locked, ExpiresAt: h.ExpiresAt, Status: h.Status}
 		return nil
 	})
-	if err == nil {
+	switch {
+	case err == nil:
+		metrics.Holds.WithLabelValues("created").Inc()
 		s.onChange(eventID, -len(out.SeatIDs))
+	case isCode(err, "SEAT_UNAVAILABLE"):
+		metrics.Holds.WithLabelValues("seat_taken").Inc()
 	}
 	return out, err
 }
@@ -101,6 +106,7 @@ func (s *Service) ReleaseHold(ctx context.Context, userID, holdID uuid.UUID) err
 		return q.SetHoldStatus(ctx, sqlc.SetHoldStatusParams{ID: holdID, Status: "released"})
 	})
 	if err == nil {
+		metrics.Holds.WithLabelValues("released").Inc()
 		s.onChange(eventID, int(released))
 	}
 	return err
@@ -133,5 +139,6 @@ func (s *Service) ExpireHolds(ctx context.Context, batch int) (int, error) {
 	for id, seats := range freed {
 		s.onChange(id, seats)
 	}
+	metrics.Holds.WithLabelValues("expired").Add(float64(n))
 	return n, nil
 }

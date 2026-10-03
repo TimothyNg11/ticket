@@ -105,3 +105,9 @@ func (s *Service) loadOrder(ctx context.Context, id uuid.UUID) (Order, error) {
 	}
 	return toOrder(o, tickets), nil
 }
+
+// isCode reports whether err is an apperr with the given code.
+func isCode(err error, code string) bool {
+	var ae *apperr.Error
+	return errors.As(err, &ae) && ae.Code == code
+}

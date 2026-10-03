@@ -141,6 +141,13 @@ jobs:
         run: |
           helm lint deploy/helm/ticket -f deploy/helm/ticket/values-local.yaml
           helm lint deploy/helm/ticket -f deploy/helm/ticket/values-cloud.yaml
+      - name: alert rules unit tests (promtool)
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w/deploy/observability --entrypoint promtool             prom/prometheus:v3.6.0 test rules alerts_test.yaml
+      - name: dashboard is generated from its source
+        run: |
+          python3 deploy/observability/gen_dashboard.py
+          git diff --exit-code -- deploy/helm/ticket/files/onsale-dashboard.json
       - name: kubeconform (schema-validate rendered manifests)
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
