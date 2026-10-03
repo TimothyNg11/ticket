@@ -20,3 +20,6 @@ api:
 ingress:
   # Plain "localhost" so every client resolves it (Go does not resolve *.localhost).
   host: localhost
+
+monitoring:
+  enabled: true

@@ -24,6 +24,10 @@ spec:
           image: {{ include "ticket.image" (dict "root" $ "name" "workers") }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           args: [{{ .name | quote }}]
+          ports: [{ name: metrics, containerPort: 9090 }]
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 15
           env: {{- include "ticket.env" $ | nindent 12 }}
           {{- include "ticket.containerSecurity" $ | nindent 10 }}
           resources: {{- toYaml $.Values.workerResources | nindent 12 }}

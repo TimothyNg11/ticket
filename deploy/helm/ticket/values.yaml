@@ -41,6 +41,7 @@ workers:
   - { name: reconciler, replicas: 1 }
   - { name: outbox-relay, replicas: 1 }
   - { name: notifier, replicas: 1 }
+  - { name: invariants, replicas: 1 }
 workerResources:
   requests: { cpu: 50m, memory: 32Mi }
   limits: { cpu: 500m, memory: 128Mi }
@@ -106,3 +107,14 @@ networkPolicies:
   ingressNamespace: traefik
   # Namespace Prometheus runs in (allowed to scrape /metrics), Phase 8.
   monitoringNamespace: monitoring
+
+# Prometheus Operator resources (ServiceMonitor, PodMonitor, PrometheusRule) and
+# the Grafana dashboard ConfigMap. Needs kube-prometheus-stack's CRDs installed.
+monitoring:
+  enabled: false
+
+tracing:
+  enabled: true
+  image: jaegertracing/jaeger:2.11.0
+  # Fraction of traces kept. 1.0 locally; lower it under production load.
+  sampleRatio: "1.0"

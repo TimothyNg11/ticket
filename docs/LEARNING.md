@@ -352,3 +352,55 @@ The first pod-kill test failed with 503s, and the cause wasn't the pod kills at 
 ### The test
 
 `deploy/kind/kill-api-during-sale.sh` runs `tools/flashsale` through the ingress for 60 seconds (300 buyers, 150 seats) and deletes a random API pod every 15 seconds. The flashsale client retries transport errors and 502/503/504 with the *same* Idempotency-Key, as a well-behaved client would. Result: 3 pods deleted, 161 orders confirmed, 11 cancelled, **0 failed operations, 0 retries needed** (graceful draining moved traffic before each pod stopped), and 0 invariant violations. CI runs the same test on every pull request.
+
+## Phase 8: Observability
+
+The goal of this phase is concrete: during a load test, any latency spike should be explainable from the dashboard. That needs three signals, each answering a different question.
+
+### Metrics: what is happening, in aggregate
+
+`internal/metrics` defines every Prometheus metric in one file, so the dashboard and alerts have one list to match against. A few rules keep them useful:
+
+- **RED per route:** request **R**ate, **E**rrors (by status), and **D**uration histograms for every endpoint (`ticket_http_requests_total`, `ticket_http_request_duration_seconds`).
+- **Labels must have few values.** The route label is the chi *pattern* (`/v1/events/{id}/holds`), read after routing. Labelling with the raw path would create a new time series for every event and hold id, and eventually take Prometheus down. `TestMetricsUseRoutePatternsAndRequestIDHeader` checks for exactly that.
+- **Histograms, not averages.** An average hides the slowest 1% of requests, which is exactly the experience of the people who complain. Percentiles are computed in Prometheus from the bucket counts (`histogram_quantile`), so they can be combined across pods correctly; per-pod percentiles can't be averaged.
+- **Saturation as well as latency:** DB pool connections in use versus max, and how often a request had to wait for one (`ticket_db_pool_empty_acquires_total`). A pool pinned at its maximum explains latency that no single query does.
+- **The domain, not just HTTP:** holds by outcome, seats sold, orders by status, payment calls by outcome, retries, circuit state, queue length, admissions, outbox lag, notifications, reconciliations, and the invariant counts.
+
+The API serves `/metrics` on its normal port (the ingress only exposes `/v1`); every worker serves one on `:9090`.
+
+### Logs: what happened to *this* request
+
+Every log line is JSON, and the logger (`observability.NewLogger`) wraps the handler so any line written while serving a request automatically carries that request's `request_id` and `trace_id`. Nothing has to pass ids around by hand. Each request also gets one access-log line (route, status, duration, user), and the response carries `X-Request-Id`, so a user can quote it in a bug report and you can find every line for that request.
+
+### Traces: where the time went
+
+OpenTelemetry instruments the HTTP server (one span per request, renamed to the route pattern), every Postgres query (`otelpgx`), Redis (`redisotel`), and the outgoing payment call (`otelhttp`), and exports spans over OTLP to Jaeger. Trace context propagates on the payment call, so a real provider that also traces would continue the same trace. Database spans are named after the sqlc query (`db GetHoldForUpdate`), so a trace reads like the code.
+
+### The drill (done-when)
+
+`deploy/observability/latency-spike-drill.sh` runs a flash sale against the Compose stack, raises the payment provider's latency to 800 ms after 30 seconds, then queries Prometheus and Jaeger:
+
+| 15 s steps → | t15 | t30 | **t45** | t60 | t75+ |
+| --- | --- | --- | --- | --- | --- |
+| checkout p99 (s) | 0.17 | 0.19 | **0.99** | 1.00 | 1.00 |
+| payment charge p99 (s) | 0.10 | 0.10 | **0.99** | 1.00 | 1.00 |
+| hold p99 (s) | 0.08 | 0.09 | 0.05 | 0.02 | 0.02 |
+| DB connections in use | 3 | 4 | 2 | 1 | ≤1 |
+
+Checkout latency jumps in the same 15-second window as the provider's latency, while holds, seat maps, and the database stay flat, so the cause isn't Postgres or the cache. The slowest checkout trace then pins it down: 801 ms of an 824 ms request is the outbound `HTTP POST` to the provider. (The p99 tops out at 1.00 because that's the edge of the histogram bucket.)
+
+Running the drill taught two lessons of its own. The first version sold out of seats *before* the latency was injected, so the "spike" never happened and the graphs looked broken: a load test has to be shaped so the thing you're measuring actually occurs. And `curl` treats `{id}` in a URL as a glob pattern, which silently mangled every PromQL query that named a route until `curl -g` turned globbing off.
+
+### Alerts
+
+`deploy/helm/ticket/files/alerts.yaml` holds the rules: p99 over 300 ms for 5 minutes, 5xx rate over 1%, outbox lag over a minute, any invariant violation (fires immediately, critical), a pod restarting more than 3 times in 15 minutes, and an open payment circuit. Rules are code, so they have tests: `deploy/observability/alerts_test.yaml` feeds synthetic series to `promtool test rules` and asserts which alerts fire and with what text. CI runs it, which catches a typo in an alert expression before an incident does.
+
+### The invariant checker
+
+`workers invariants` runs `booking.CheckInvariants` every 30 seconds and exports each count as `ticket_invariant_violations{check=...}`. The alert on it has no `for:` delay: a double-sold seat should page at once.
+
+### Running it
+
+- Compose: Prometheus on `:9090`, Grafana on `:3000` (opens on the "Ticket: On-sale" dashboard), Jaeger on `:16686`.
+- Kubernetes: `deploy/kind/up.sh` installs kube-prometheus-stack. The chart adds a ServiceMonitor (API), a PodMonitor (workers), a PrometheusRule (the same alerts file), and the dashboard as a ConfigMap that Grafana's sidecar loads. NetworkPolicies let the `monitoring` namespace scrape the API and workers and nothing else. The dashboard is generated by `deploy/observability/gen_dashboard.py`; CI fails if the committed JSON is stale.

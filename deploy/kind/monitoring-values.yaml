@@ -1,0 +1,40 @@
+# kube-prometheus-stack for the local kind cluster.
+prometheus:
+  prometheusSpec:
+    # Select ServiceMonitors, PodMonitors and rules from every release and
+    # namespace, not only ones labelled for this Helm release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    scrapeInterval: 10s
+    retention: 2d
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+
+grafana:
+  # Local cluster only: anonymous viewers, so the dashboard opens without a login.
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+  additionalDataSources:
+    - name: Jaeger
+      uid: jaeger
+      type: jaeger
+      url: http://jaeger.ticket.svc:16686
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+
+# kind's control-plane components don't expose metrics on reachable addresses.
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }

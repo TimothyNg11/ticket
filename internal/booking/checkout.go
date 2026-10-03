@@ -11,6 +11,7 @@ import (
 	"ticket/internal/apperr"
 	"ticket/internal/db"
 	"ticket/internal/db/sqlc"
+	"ticket/internal/metrics"
 	"ticket/internal/payments"
 )
 
@@ -121,7 +122,7 @@ func (s *Service) Checkout(ctx context.Context, userID, holdID uuid.UUID, idemKe
 // more than once (checkout and the reconciler may race).
 func (s *Service) ApplyChargeResult(ctx context.Context, orderID uuid.UUID, res payments.Result) (Order, error) {
 	var eventID uuid.UUID
-	sold := false
+	sold, soldSeats := false, 0
 	err := db.InTx(ctx, s.pool, func(q *sqlc.Queries) error {
 		o, err := q.GetOrderForUpdate(ctx, orderID)
 		if err != nil {
@@ -138,6 +139,7 @@ func (s *Service) ApplyChargeResult(ctx context.Context, orderID uuid.UUID, res 
 			return err
 		}
 		if res.Status == payments.Declined {
+			metrics.Orders.WithLabelValues("failed").Inc()
 			return q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "failed"})
 		}
 
@@ -165,7 +167,7 @@ func (s *Service) ApplyChargeResult(ctx context.Context, orderID uuid.UUID, res 
 		if err := q.SetHoldStatus(ctx, sqlc.SetHoldStatusParams{ID: o.HoldID, Status: "converted"}); err != nil {
 			return err
 		}
-		eventID, sold = o.EventID, true
+		eventID, sold, soldSeats = o.EventID, true, len(seats)
 		if err := q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "confirmed"}); err != nil {
 			return err
 		}
@@ -175,6 +177,8 @@ func (s *Service) ApplyChargeResult(ctx context.Context, orderID uuid.UUID, res 
 		return Order{}, err
 	}
 	if sold {
+		metrics.Orders.WithLabelValues("confirmed").Inc()
+		metrics.SeatsSold.Add(float64(soldSeats))
 		s.onChange(eventID, 0) // held -> sold: availability unchanged, but the seat map changed
 	}
 	return s.loadOrder(ctx, orderID)

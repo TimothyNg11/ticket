@@ -21,6 +21,7 @@ echo "== cluster add-ons"
 helm repo add traefik https://traefik.github.io/charts --force-update >/dev/null
 helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null
 helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ --force-update >/dev/null
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update >/dev/null
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
   --set crds.enabled=true --wait >/dev/null
 # kind kubelets use self-signed serving certs; the HPA needs metrics-server to talk to them.
@@ -29,6 +30,11 @@ helm upgrade --install metrics-server metrics-server/metrics-server -n kube-syst
 # Traefik runs on the control-plane node, bound to host ports 80/443 that kind
 # maps to the machine (see cluster.yaml). ADR 0008 explains Traefik over NGINX.
 helm upgrade --install traefik traefik/traefik -n traefik --create-namespace   -f deploy/kind/traefik-values.yaml --wait >/dev/null
+
+# Prometheus, Alertmanager, Grafana, kube-state-metrics, node-exporter. The
+# selectors are opened up so it picks up our ServiceMonitors, rules and dashboards.
+helm upgrade --install monitoring prometheus-community/kube-prometheus-stack -n monitoring --create-namespace \
+  -f deploy/kind/monitoring-values.yaml --wait --timeout 8m >/dev/null
 
 echo "== images"
 for svc in api workers payments_mock; do
@@ -52,4 +58,7 @@ helm upgrade --install ticket deploy/helm/ticket -n "$NS" \
   -f deploy/helm/ticket/values-local.yaml --set image.tag="$TAG" --wait --timeout 6m
 
 echo "== ready: https://localhost (self-signed; use -k / --insecure)"
+echo "   Grafana:    kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80   (dashboard: Ticket: On-sale)"
+echo "   Prometheus: kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090"
+echo "   Jaeger:     kubectl -n $NS port-forward svc/jaeger 16686"
 kubectl -n "$NS" get pods

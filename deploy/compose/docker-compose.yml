@@ -3,6 +3,7 @@
 name: ticket
 
 x-db-url: &db-url postgres://ticket:${POSTGRES_PASSWORD}@postgres:5432/ticket?sslmode=disable
+x-otel: &otel http://jaeger:4318
 
 x-api-image: &api-image
   image: ticket/api:dev
@@ -33,6 +34,7 @@ services:
     command: ["migrate"]
     environment:
       DATABASE_URL: *db-url
+      OTEL_EXPORTER_OTLP_ENDPOINT: *otel
     depends_on:
       postgres: { condition: service_healthy }
 
@@ -58,6 +60,7 @@ services:
     <<: *api-image
     environment:
       DATABASE_URL: *db-url
+      OTEL_EXPORTER_OTLP_ENDPOINT: *otel
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       TICKET_SIGNING_KEY: ${TICKET_SIGNING_KEY:?set TICKET_SIGNING_KEY in .env}
       PAYMENTS_URL: http://payments:8081
@@ -83,6 +86,7 @@ services:
     command: ["sweeper"]
     environment:
       DATABASE_URL: *db-url
+      OTEL_EXPORTER_OTLP_ENDPOINT: *otel
       SWEEP_INTERVAL: 15s
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -92,6 +96,7 @@ services:
     command: ["availability"]
     environment:
       DATABASE_URL: *db-url
+      OTEL_EXPORTER_OTLP_ENDPOINT: *otel
       REDIS_URL: redis://redis:6379/0
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -102,6 +107,7 @@ services:
     command: ["admitter"]
     environment:
       DATABASE_URL: *db-url
+      OTEL_EXPORTER_OTLP_ENDPOINT: *otel
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
     depends_on:
@@ -113,6 +119,7 @@ services:
     command: ["reconciler"]
     environment:
       DATABASE_URL: *db-url
+      OTEL_EXPORTER_OTLP_ENDPOINT: *otel
       PAYMENTS_URL: http://payments:8081
       TICKET_SIGNING_KEY: ${TICKET_SIGNING_KEY:?set TICKET_SIGNING_KEY in .env}
     depends_on:
@@ -123,6 +130,7 @@ services:
     command: ["outbox-relay"]
     environment:
       DATABASE_URL: *db-url
+      OTEL_EXPORTER_OTLP_ENDPOINT: *otel
       REDIS_URL: redis://redis:6379/0
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -133,10 +141,45 @@ services:
     command: ["notifier"]
     environment:
       DATABASE_URL: *db-url
+      OTEL_EXPORTER_OTLP_ENDPOINT: *otel
       REDIS_URL: redis://redis:6379/0
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
+
+  invariants:
+    <<: *workers-image
+    command: ["invariants"]
+    environment:
+      DATABASE_URL: *db-url
+      OTEL_EXPORTER_OTLP_ENDPOINT: *otel
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  # --- observability (Phase 8) ---
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-lifecycle"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../helm/ticket/files/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/onsale-dashboard.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../helm/ticket/files/onsale-dashboard.json:/var/lib/grafana/dashboards/onsale-dashboard.json:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0
+    ports: ["16686:16686", "4318:4318"]
 
 volumes:
   pgdata: {}

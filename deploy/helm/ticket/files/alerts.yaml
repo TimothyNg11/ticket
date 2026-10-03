@@ -1,0 +1,49 @@
+# Prometheus alerting rules. Loaded by Compose's Prometheus directly and by the
+# Helm chart as a PrometheusRule. Tested by deploy/observability/alerts_test.yaml.
+groups:
+  - name: ticket
+    rules:
+      - alert: TicketHighP99Latency
+        expr: |
+          histogram_quantile(0.99, sum by (le, route) (rate(ticket_http_request_duration_seconds_bucket{route=~"/v1.*"}[5m]))) > 0.3
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "p99 latency on {{ $labels.route }} is {{ $value | humanizeDuration }}"
+          description: "Over the 300 ms target for 5 minutes. Check the dashboard's cache, DB pool and payment panels."
+
+      - alert: TicketHighErrorRate
+        expr: |
+          sum(rate(ticket_http_requests_total{status=~"5.."}[5m])) / sum(rate(ticket_http_requests_total[5m])) > 0.01
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of API requests are failing"
+
+      - alert: TicketOutboxLagGrowing
+        expr: max(ticket_outbox_lag_seconds) > 60
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Oldest unpublished event is {{ $value | humanizeDuration }} old"
+          description: "The outbox relay is down or behind. Notifications are delayed; nothing is lost."
+
+      - alert: TicketInvariantViolated
+        expr: sum(ticket_invariant_violations) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Core guarantee violated: {{ $value }} rows (double-sold seat or money/seat mismatch)"
+          description: "Stop sales and investigate immediately. GET /v1/admin/invariants shows which check."
+
+      - alert: TicketPodCrashLooping
+        expr: increase(kube_pod_container_status_restarts_total{namespace="ticket"}[15m]) > 3
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.pod }} restarted {{ $value }} times in 15 minutes"
+
+      - alert: TicketPaymentCircuitOpen
+        expr: max(ticket_payment_circuit_state) == 1
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Payment circuit open: checkouts are failing fast with 503"

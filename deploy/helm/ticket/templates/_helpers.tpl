@@ -75,4 +75,10 @@ never appears in a ConfigMap or the rendered manifest.
   valueFrom: { resourceFieldRef: { resource: limits.memory, divisor: 1Mi } }
 - name: GOMEMLIMIT
   value: $(MEM_LIMIT_MIB)MiB
+{{- if .Values.tracing.enabled }}
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: http://jaeger:4318
+- name: OTEL_TRACES_SAMPLER_ARG
+  value: {{ .Values.tracing.sampleRatio | quote }}
+{{- end }}
 {{- end }}

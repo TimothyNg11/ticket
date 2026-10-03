@@ -85,4 +85,36 @@ spec:
         - podSelector: { matchLabels: { app.kubernetes.io/name: api } }
         - podSelector: { matchLabels: { app.kubernetes.io/name: worker-reconciler } }
       ports: [{ port: 8081 }]
+---
+# Prometheus scrapes worker metrics.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker-metrics-ingress
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: worker } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.monitoringNamespace }} } }
+      ports: [{ port: 9090 }]
+---
+# Jaeger receives spans from our pods; its UI is reachable from the monitoring
+# namespace (Grafana) and via kubectl port-forward.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jaeger-ingress
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: jaeger } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/part-of: ticket } }
+      ports: [{ port: 4318 }]
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.monitoringNamespace }} } }
+      ports: [{ port: 16686 }]
 {{- end }}
