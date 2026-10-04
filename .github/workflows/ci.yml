@@ -180,3 +180,29 @@ jobs:
           kubectl -n ticket get pods -o wide
           kubectl -n ticket get events --sort-by=.lastTimestamp | tail -40
           kubectl -n ticket logs deploy/api --tail=100 --all-containers
+
+  promote:
+    name: promote to gitops
+    # Only builds that passed every check get deployed.
+    needs: [build, smoke, kind-e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: promote
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with: { ref: gitops }
+      - name: point the kind environment at this build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          sed -i -E "s/^( *)tag: .*/\1tag: ${GITHUB_SHA}/" apps/ticket.yaml
+          grep -q "tag: ${GITHUB_SHA}" apps/ticket.yaml
+          git commit -am "Deploy ${GITHUB_SHA::7} to kind" -m "Built and tested from main at ${GITHUB_SHA}."
+          # Two merges in quick succession: rebase onto the newer pin and retry.
+          for i in 1 2 3; do git push origin HEAD:gitops && exit 0; git pull --rebase origin gitops; done
+          exit 1
+

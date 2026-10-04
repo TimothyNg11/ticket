@@ -1,0 +1,11 @@
+# Argo CD for the local kind cluster.
+configs:
+  cm:
+    # Check git every 60 s (default 180 s) so a merge reaches the cluster quickly.
+    timeout.reconciliation: 60s
+  params:
+    server.insecure: true # local only: the UI is reached through kubectl port-forward
+dex:
+  enabled: false
+notifications:
+  enabled: false

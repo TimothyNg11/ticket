@@ -442,3 +442,24 @@ No amount of server tuning makes 50,000 people polling every 10 seconds fit on o
 ### Chaos testing
 
 `loadtest/chaos.sh` runs a sale while killing, in turn, an API pod, the payment service, Redis, the reconciler and the outbox relay, and making payments fail 40% of the time. Passing requires more than "the API stayed up": afterwards no order may be stuck in `pending_payment`, the outbox must be fully published, every refund must have gone through, and the invariants must hold. It took three attempts; the first two found the slow invariant query and the missing `Retry-After`.
+
+## Phase 10: Delivery (GitOps)
+
+### Deploys as commits
+
+With GitOps, the cluster's desired state lives in git and a controller inside the cluster (Argo CD) continuously makes reality match it. Nobody runs `kubectl apply` or `helm upgrade` by hand. The pipeline:
+
+1. A pull request merges to `main`.
+2. CI builds and scans the images and pushes them to GHCR, tagged with the merge commit's SHA. It also runs every test, including the kind end-to-end sale with pod kills.
+3. Only if *all* of that passes, the `promote` job commits the new SHA into `apps/ticket.yaml` on the `gitops` branch.
+4. Argo CD polls git every 60 s, sees the change, and runs the chart's rolling update (`maxUnavailable: 0`), so the API never drops below capacity.
+
+So every deploy is a commit with an author, a timestamp, and the exact build. **Rolling back means reverting that commit**: Argo CD puts the previous SHA back within a minute. `selfHeal` also reverts manual changes made directly in the cluster, so what's running can't quietly drift from what's in git.
+
+### Why a separate `gitops` branch
+
+`main` requires a reviewed pull request with passing checks, so a CI bot can't push to it. Keeping deployment state on its own branch keeps code history (`main`) separate from deploy history (`gitops`). Argo CD can't read one repository at two revisions within a single Application, so the setup uses the standard *app of apps*: a root Application watches `apps/` on `gitops`, and `apps/ticket.yaml` is itself an Application that deploys the chart from `main` with the pinned image tag.
+
+### Rollbacks and migrations
+
+The first GitOps sync rolled the cluster *back* to an older build than the one running, and every API pod failed to start: the newer build had migrated the schema to version 6, and the older migrator refused a database "ahead" of it. That would have broken every real rollback across a migration. The fix makes the migrator accept a newer schema (`TestMigrateToleratesNewerSchema`). That is only safe because of a rule the project already follows: migrations are backward compatible, so older code runs on the newer schema (add columns and tables now; drop old ones only in a later release, after no running code uses them).

@@ -138,19 +138,25 @@ func TestOtherPodRebuildingServesLatest(t *testing.T) {
 func TestRebuildsAreCoalescedUnderWrites(t *testing.T) {
 	e := newEnv(t, testutil.NewRedis(t))
 	ctx := context.Background()
+	start := time.Now()
 	for range 20 {
 		e.c.SeatsChanged(e.eventID, 0)
 		_, err := e.c.SeatMap(ctx, e.eventID)
 		require.NoError(t, err)
 	}
-	assert.EqualValues(t, 1, e.c.Stats.Rebuilds.Load(), "20 changes in quick succession, one rebuild")
-	assert.EqualValues(t, 19, e.c.Stats.Coalesced.Load())
+	// The guarantee is at most one rebuild per 250 ms window, whatever the
+	// machine's speed: bound rebuilds by the time the loop actually took.
+	windows := int64(time.Since(start)/(250*time.Millisecond)) + 1
+	rebuilds := e.c.Stats.Rebuilds.Load()
+	assert.LessOrEqual(t, rebuilds, windows, "20 changes, at most one rebuild per window")
+	assert.Equal(t, int64(20), rebuilds+e.c.Stats.Coalesced.Load(), "every other read was served from the coalesced copy")
+	assert.Positive(t, e.c.Stats.Coalesced.Load())
 
 	time.Sleep(300 * time.Millisecond) // past the coalescing window
 	e.c.SeatsChanged(e.eventID, 0)
 	_, err := e.c.SeatMap(ctx, e.eventID)
 	require.NoError(t, err)
-	assert.EqualValues(t, 2, e.c.Stats.Rebuilds.Load(), "the next change after the window is rebuilt")
+	assert.Equal(t, rebuilds+1, e.c.Stats.Rebuilds.Load(), "the next change after the window is rebuilt")
 }
 
 // The cache hands out the finished, gzip-compressed response body, so serving

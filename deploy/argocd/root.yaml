@@ -1,0 +1,29 @@
+# Argo CD root application ("app of apps"). It watches apps/ on the gitops
+# branch and applies the Applications defined there; apps/ticket.yaml in turn
+# deploys the Helm chart from main with the image tag CI recorded.
+#
+#   merge to main -> CI builds, tests, pushes images tagged with the SHA
+#                 -> CI commits the new tag to apps/ticket.yaml on gitops
+#                 -> this root app updates the ticket Application
+#                 -> the ticket Application rolls the new pods out
+#
+# Two Applications, each reading one revision of the repo: Argo CD can't read
+# one repository at two revisions (main + gitops) within a single Application.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  source:
+    repoURL: https://github.com/TimothyNg11/ticket.git
+    targetRevision: gitops
+    path: apps
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
