@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,10 +22,12 @@ func TestSeatMapReadsServedFromCache(t *testing.T) {
 	}
 	assert.EqualValues(t, 1, e.cache.Stats.Rebuilds.Load(), "one database read for 50 requests")
 
-	// A hold shows up on the very next read: holding bumps the cache version.
+	// A hold shows up once the 250 ms rebuild-coalescing window has passed:
+	// holding bumps the cache version (ADR 0009 bounds staleness at 2 s).
 	tok := e.userToken(t)
 	status, body := call(t, e.srv, "POST", "/v1/events/"+eventID.String()+"/holds", tok, map[string]any{"seat_ids": seats[:1]})
 	require.Equal(t, 201, status, string(body))
+	time.Sleep(300 * time.Millisecond)
 	_, body = call(t, e.srv, "GET", path, "", nil)
 	assert.Contains(t, string(body), `"state":"held"`)
 
