@@ -71,6 +71,9 @@ database:
   host: "" # defaults to the in-cluster postgres service
   name: ticket
   user: ticket
+  # TLS to Postgres: disable for the in-cluster database, require (or verify-full)
+  # for a managed one. PgBouncer uses it for its connections to Postgres.
+  sslmode: disable
 
 pgbouncer:
   enabled: true

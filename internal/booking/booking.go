@@ -32,6 +32,8 @@ type Service struct {
 	signer   *auth.TicketSigner
 	holdTTL  time.Duration
 	onChange func(eventID uuid.UUID, availableDelta int) // called after seat states change
+
+	afterLockExpired func() // tests only: called once ExpireHolds has locked its holds
 }
 
 // New returns a Service. Holds expire holdTTL after creation.

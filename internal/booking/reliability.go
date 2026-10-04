@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,6 +57,9 @@ func (s *Service) Reconcile(ctx context.Context, olderThan time.Duration, batch 
 	if err != nil {
 		return res, err
 	}
+	// One order that can't be settled must not block the rest: collect its error
+	// and move on.
+	var errs []error
 	for _, o := range pending {
 		charge, err := s.pay.Charge(ctx, ChargeKey(o.ID), int(o.TotalCents))
 		if errors.Is(err, payments.ErrUnknownOutcome) || errors.Is(err, payments.ErrCircuitOpen) {
@@ -63,11 +67,13 @@ func (s *Service) Reconcile(ctx context.Context, olderThan time.Duration, batch 
 			continue
 		}
 		if err != nil {
-			return res, err
+			errs = append(errs, fmt.Errorf("order %s: %w", o.ID, err))
+			continue
 		}
 		settled, err := s.ApplyChargeResult(ctx, o.ID, charge)
 		if err != nil {
-			return res, err
+			errs = append(errs, fmt.Errorf("order %s: %w", o.ID, err))
+			continue
 		}
 		if settled.Status == "confirmed" {
 			res.Confirmed++
@@ -78,12 +84,12 @@ func (s *Service) Reconcile(ctx context.Context, olderThan time.Duration, batch 
 
 	cancelled, err := q.ListUnrefundedCancelledOrders(ctx, sqlc.ListUnrefundedCancelledOrdersParams{UpdatedAt: cutoff, Limit: limit})
 	if err != nil {
-		return res, err
+		return res, errors.Join(append(errs, err)...)
 	}
 	for _, o := range cancelled {
 		if err := s.RetryRefund(ctx, o.ID); err == nil {
 			res.Refunded++
 		}
 	}
-	return res, nil
+	return res, errors.Join(errs...)
 }

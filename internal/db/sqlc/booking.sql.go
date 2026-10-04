@@ -264,6 +264,33 @@ func (q *Queries) HoldSeats(ctx context.Context, arg HoldSeatsParams) (int64, er
 	return result.RowsAffected(), nil
 }
 
+const holdsWithPendingOrder = `-- name: HoldsWithPendingOrder :many
+SELECT hold_id FROM orders
+WHERE hold_id = ANY($1::uuid[]) AND status = 'pending_payment'
+`
+
+// Run after LockExpiredHolds, as a new statement: its snapshot sees orders that
+// committed after LockExpiredHolds took its snapshot.
+func (q *Queries) HoldsWithPendingOrder(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, holdsWithPendingOrder, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var hold_id uuid.UUID
+		if err := rows.Scan(&hold_id); err != nil {
+			return nil, err
+		}
+		items = append(items, hold_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHoldSeats = `-- name: ListHoldSeats :many
 SELECT id, price_cents FROM event_seats WHERE hold_id = $1 ORDER BY id
 `

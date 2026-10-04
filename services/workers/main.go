@@ -36,6 +36,7 @@ import (
 	"ticket/internal/auth"
 	"ticket/internal/booking"
 	"ticket/internal/cache"
+	"ticket/internal/idempotency"
 	"ticket/internal/inventory"
 	"ticket/internal/metrics"
 	"ticket/internal/observability"
@@ -92,9 +93,15 @@ func run(ctx context.Context, job string, log *slog.Logger) error {
 					log.Info("expired holds", "count", n)
 				}
 				if n < 500 {
-					return nil
+					break
 				}
 			}
+			// Idempotency keys live 24 hours; the sweeper clears them out too.
+			n, err := idempotency.DeleteExpired(ctx, pool)
+			if n > 0 {
+				log.Info("deleted expired idempotency keys", "count", n)
+			}
+			return err
 		})
 	case "availability":
 		rdb, err := redisFromEnv()

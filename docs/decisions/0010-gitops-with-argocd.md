@@ -16,6 +16,8 @@ Merging to `main` should update the running cluster with no manual steps, every 
 ## Consequences
 
 - Deploy = commit on `gitops`; rollback = `git revert` of that commit. Both are visible in history.
+- CI runs finish in any order, so promotion only moves the pin forward (`.github/scripts/promote.sh` skips a build the pinned one already contains). A deliberate rollback is a manual commit on `gitops`.
+- The chart is rendered from `main` while the image is pinned, so a merge's template changes reach the cluster before its image does. Chart changes must work with the previous image.
 - A merge reaches the cluster in roughly CI time plus Argo CD's 60 s poll. A GitHub webhook to Argo CD would remove the poll delay.
 - Rollbacks cross migrations, so migrations must stay backward compatible, and the migrator tolerates a schema newer than the build (`TestMigrateToleratesNewerSchema`).
 - Canary releases (Argo Rollouts) and a cloud deployment were optional in the spec and are not done; `values-cloud.yaml` covers the configuration side.

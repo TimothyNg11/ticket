@@ -44,7 +44,8 @@ securityContext:
 {{/*
 Environment shared by the API and workers. DATABASE_URL is assembled at runtime
 from the secret's password via $(POSTGRES_PASSWORD) expansion, so the password
-never appears in a ConfigMap or the rendered manifest.
+never appears in a ConfigMap or the rendered manifest. Through PgBouncer the
+connection stays inside the cluster; PgBouncer applies database.sslmode upstream.
 */}}
 {{- define "ticket.env" -}}
 - name: POSTGRES_PASSWORD
@@ -54,7 +55,7 @@ never appears in a ConfigMap or the rendered manifest.
 - name: TICKET_SIGNING_KEY
   valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: TICKET_SIGNING_KEY } }
 - name: DATABASE_URL
-  value: postgres://{{ .Values.database.user }}:$(POSTGRES_PASSWORD)@{{ include "ticket.appDbHost" . }}:5432/{{ .Values.database.name }}?sslmode=disable
+  value: postgres://{{ .Values.database.user }}:$(POSTGRES_PASSWORD)@{{ include "ticket.appDbHost" . }}:5432/{{ .Values.database.name }}?sslmode={{ if .Values.pgbouncer.enabled }}disable{{ else }}{{ .Values.database.sslmode }}{{ end }}
 - name: REDIS_URL
   value: {{ .Values.redis.url | default "redis://redis:6379/0" | quote }}
 - name: PAYMENTS_URL

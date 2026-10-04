@@ -7,10 +7,11 @@ postgres:
   enabled: false
 database:
   host: ticket-db.internal # managed Postgres (Cloud SQL / RDS) private address
+  sslmode: require
 
 redis:
   enabled: false
-  url: redis://ticket-cache.internal:6379/0 # managed Redis (Memorystore / ElastiCache)
+  url: rediss://ticket-cache.internal:6378/0 # managed Redis (Memorystore / ElastiCache), TLS
 
 payments:
   enabled: false
