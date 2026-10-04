@@ -25,7 +25,7 @@ spec:
         image:
           registry: ghcr.io/timothyng11
           pullPolicy: IfNotPresent
-          tag: 9814894206aab4b88a423b2e8674dcd9a3719205
+          tag: a8b411c875b084397ca96ad71c9c23e348222a16
   syncPolicy:
     automated:
       prune: true    # resources removed from git are removed from the cluster
