@@ -1,0 +1,36 @@
+# The ticket application as deployed to the kind cluster. Argo CD's root app
+# (deploy/argocd/root.yaml on main) watches this directory and applies it.
+#
+# CI rewrites image.tag after every merge to main that passes all checks; the
+# tag is that merge commit's SHA. To roll back, revert the commit that changed
+# it: Argo CD rolls the cluster back within a minute.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ticket
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ticket
+  source:
+    repoURL: https://github.com/TimothyNg11/ticket.git
+    targetRevision: main
+    path: deploy/helm/ticket
+    helm:
+      releaseName: ticket
+      valueFiles: [values-local.yaml]
+      valuesObject:
+        image:
+          registry: ghcr.io/timothyng11
+          pullPolicy: IfNotPresent
+          tag: 9814894206aab4b88a423b2e8674dcd9a3719205
+  syncPolicy:
+    automated:
+      prune: true    # resources removed from git are removed from the cluster
+      selfHeal: true # manual changes in the cluster are reverted to match git
+    syncOptions: [CreateNamespace=true]
+    retry:
+      limit: 5
+      backoff: { duration: 10s, factor: 2, maxDuration: 3m }

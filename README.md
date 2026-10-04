@@ -1,8 +1,8 @@
 # gitops
 
-Deployment state, not code. Each file in `environments/` pins what an
-environment runs; Argo CD (see `deploy/argocd/application.yaml` on `main`)
-applies the Helm chart from `main` with these values.
+Deployment state, not code. `apps/` holds the Argo CD Application for each
+environment, including the exact image tag (commit SHA) it runs. The root app
+(`deploy/argocd/root.yaml` on `main`) applies whatever is here.
 
-CI updates `image.tag` after every merge to `main`. Every deploy and rollback
-is therefore a commit here, with history and authorship.
+CI updates the tag after every merge to `main` that passes all checks, so every
+deploy and every rollback is a commit on this branch, with history and an author.
