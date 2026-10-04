@@ -2,6 +2,7 @@ package booking
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -122,6 +123,20 @@ func (s *Service) ExpireHolds(ctx context.Context, batch int) (int, error) {
 		ids, err := q.LockExpiredHolds(ctx, int32(min(batch, 10_000))) //nolint:gosec // clamped
 		if err != nil || len(ids) == 0 {
 			return err
+		}
+		if s.afterLockExpired != nil {
+			s.afterLockExpired()
+		}
+		// LockExpiredHolds skipped holds with a pending order as of its snapshot, but
+		// a checkout can commit an order after that snapshot and before the lock.
+		// The holds are locked now, so no new order can appear; check again.
+		paying, err := q.HoldsWithPendingOrder(ctx, ids)
+		if err != nil {
+			return err
+		}
+		ids = slices.DeleteFunc(ids, func(id uuid.UUID) bool { return slices.Contains(paying, id) })
+		if len(ids) == 0 {
+			return nil
 		}
 		events, err := q.ReleaseSeatsOfHolds(ctx, ids)
 		if err != nil {

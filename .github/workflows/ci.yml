@@ -148,6 +148,8 @@ jobs:
         run: |
           python3 deploy/observability/gen_dashboard.py
           git diff --exit-code -- deploy/helm/ticket/files/onsale-dashboard.json
+      - name: promote script test
+        run: bash .github/scripts/promote_test.sh
       - name: kubeconform (schema-validate rendered manifests)
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
@@ -184,7 +186,7 @@ jobs:
   promote:
     name: promote to gitops
     # Only builds that passed every check get deployed.
-    needs: [build, smoke, kind-e2e]
+    needs: [build, smoke, kind-e2e, vuln-scan, k8s-validate]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -194,15 +196,12 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
-        with: { ref: gitops }
+        # Full history: promote.sh checks the pinned build against this one.
+        with: { ref: gitops, fetch-depth: 0 }
       - name: point the kind environment at this build
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          sed -i -E "s/^( *)tag: .*/\1tag: ${GITHUB_SHA}/" apps/ticket.yaml
-          grep -q "tag: ${GITHUB_SHA}" apps/ticket.yaml
-          git commit -am "Deploy ${GITHUB_SHA::7} to kind" -m "Built and tested from main at ${GITHUB_SHA}."
-          # Two merges in quick succession: rebase onto the newer pin and retry.
-          for i in 1 2 3; do git push origin HEAD:gitops && exit 0; git pull --rebase origin gitops; done
-          exit 1
+          git show "${GITHUB_SHA}:.github/scripts/promote.sh" > "${RUNNER_TEMP}/promote.sh"
+          bash "${RUNNER_TEMP}/promote.sh" "${GITHUB_SHA}"
 

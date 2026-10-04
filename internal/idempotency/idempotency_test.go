@@ -177,6 +177,43 @@ func Test5xxIsNotStored(t *testing.T) {
 	assert.EqualValues(t, 2, h.calls.Load())
 }
 
+// 499 means the client hung up before the handler finished: not an answer the
+// client ever saw, so a retry with the same key must run again.
+func TestClientClosedRequestIsNotStored(t *testing.T) {
+	h := newHarness(t)
+	h.status = 499
+	u := h.user(t)
+	h.do(t, "POST", "/v1/events/e/holds", u, "k", `{}`)
+	h.status = http.StatusCreated
+	r := h.do(t, "POST", "/v1/events/e/holds", u, "k", `{}`)
+	assert.Equal(t, 201, r.status)
+	assert.Empty(t, r.replay)
+	assert.EqualValues(t, 2, h.calls.Load())
+}
+
+func TestDeleteExpiredRemovesOnlyExpiredKeys(t *testing.T) {
+	h := newHarness(t)
+	u := h.user(t)
+	h.do(t, "POST", "/v1/events/e/holds", u, "old", `{}`)
+	h.do(t, "POST", "/v1/events/e/holds", u, "new", `{}`)
+	ctx := context.Background()
+	_, err := h.pool.Exec(ctx, `UPDATE idempotency_keys SET expires_at = now() - interval '1 second' WHERE key = 'old'`)
+	require.NoError(t, err)
+
+	n, err := idempotency.DeleteExpired(ctx, h.pool)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, n)
+	var keys []string
+	rows, err := h.pool.Query(ctx, `SELECT key FROM idempotency_keys`)
+	require.NoError(t, err)
+	for rows.Next() {
+		var k string
+		require.NoError(t, rows.Scan(&k))
+		keys = append(keys, k)
+	}
+	assert.Equal(t, []string{"new"}, keys)
+}
+
 func TestAbandonedInProgressIsTakenOver(t *testing.T) {
 	h := newHarness(t)
 	u := h.user(t)

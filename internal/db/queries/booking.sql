@@ -40,6 +40,12 @@ ORDER BY h.expires_at
 LIMIT sqlc.arg(batch)::int
 FOR UPDATE SKIP LOCKED;
 
+-- name: HoldsWithPendingOrder :many
+-- Run after LockExpiredHolds, as a new statement: its snapshot sees orders that
+-- committed after LockExpiredHolds took its snapshot.
+SELECT hold_id FROM orders
+WHERE hold_id = ANY(sqlc.arg(ids)::uuid[]) AND status = 'pending_payment';
+
 -- name: ExpireHolds :exec
 UPDATE holds SET status = 'expired' WHERE id = ANY(sqlc.arg(ids)::uuid[]);
 

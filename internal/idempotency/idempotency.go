@@ -170,8 +170,9 @@ func (g *Guard) Handler(next http.Handler) http.Handler {
 		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		err = db.InAsyncCommitTx(saveCtx, g.pool, func(q *sqlc.Queries) error {
-			if rec.status >= 500 {
-				// Server-side failures aren't final answers; free the key so a retry runs.
+			if rec.status >= 500 || rec.status == 499 {
+				// Server-side failures and requests the client abandoned (499) aren't
+				// final answers; free the key so a retry runs.
 				return q.DeleteIdempotencyKey(saveCtx, sqlc.DeleteIdempotencyKeyParams{UserID: user, Key: key})
 			}
 			return q.SaveIdempotentResponse(saveCtx, sqlc.SaveIdempotentResponseParams{
@@ -182,6 +183,12 @@ func (g *Guard) Handler(next http.Handler) http.Handler {
 			g.log.ErrorContext(ctx, "saving idempotent response", "err", err, "user_id", user, "key", key)
 		}
 	})
+}
+
+// DeleteExpired removes keys past their 24-hour lifetime and returns how many it
+// removed. Every write request adds one, so something must run this regularly.
+func DeleteExpired(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
+	return sqlc.New(pool).DeleteExpiredIdempotencyKeys(ctx)
 }
 
 func replay(w http.ResponseWriter, status int, body []byte) {

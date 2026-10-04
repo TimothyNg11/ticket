@@ -113,6 +113,9 @@ func (s *Service) Checkout(ctx context.Context, userID, holdID uuid.UUID, idemKe
 	if err == nil && o.Status == "failed" {
 		return Order{}, errDeclined
 	}
+	if err == nil && o.Status == "cancelled" {
+		return Order{}, apperr.Conflict("HOLD_EXPIRED", "the hold expired before payment completed; the charge will be refunded")
+	}
 	return o, err
 }
 
@@ -122,7 +125,7 @@ func (s *Service) Checkout(ctx context.Context, userID, holdID uuid.UUID, idemKe
 // more than once (checkout and the reconciler may race).
 func (s *Service) ApplyChargeResult(ctx context.Context, orderID uuid.UUID, res payments.Result) (Order, error) {
 	var eventID uuid.UUID
-	sold, soldSeats := false, 0
+	sold, soldSeats, cancelled := false, 0, false
 	err := db.InTx(ctx, s.pool, func(q *sqlc.Queries) error {
 		o, err := q.GetOrderForUpdate(ctx, orderID)
 		if err != nil {
@@ -147,13 +150,22 @@ func (s *Service) ApplyChargeResult(ctx context.Context, orderID uuid.UUID, res 
 		if err != nil {
 			return err
 		}
+		if len(seats) == 0 {
+			// The hold expired while the payment was in flight and its seats may
+			// have been resold. Cancel the order; the reconciler refunds the charge.
+			cancelled = true
+			if err := q.SetOrderStatus(ctx, sqlc.SetOrderStatusParams{ID: o.ID, Status: "cancelled"}); err != nil {
+				return err
+			}
+			return emit(ctx, q, "order.cancelled", o, nil)
+		}
 		n, err := q.SellHoldSeats(ctx, sqlc.SellHoldSeatsParams{OrderID: o.ID, HoldID: o.HoldID})
 		if err != nil {
 			return err
 		}
-		if int(n) != len(seats) || n == 0 {
-			// Should be impossible: the sweeper never expires a hold with a pending
-			// order. Refuse rather than sell a partial order.
+		if int(n) != len(seats) {
+			// Should be impossible: holds are released whole. Refuse rather than
+			// sell a partial order.
 			return fmt.Errorf("booking: order %s: expected %d held seats, sold %d", o.ID, len(seats), n)
 		}
 		for _, st := range seats {
@@ -175,6 +187,9 @@ func (s *Service) ApplyChargeResult(ctx context.Context, orderID uuid.UUID, res 
 	})
 	if err != nil {
 		return Order{}, err
+	}
+	if cancelled {
+		metrics.Orders.WithLabelValues("cancelled").Inc()
 	}
 	if sold {
 		metrics.Orders.WithLabelValues("confirmed").Inc()
