@@ -1,0 +1,7 @@
+# The kind environment: which build is deployed. CI rewrites `tag` after every
+# merge to main (the image tag is the merge commit's SHA). To roll back, revert
+# the commit that changed it; Argo CD rolls the cluster back within a minute.
+image:
+  registry: ghcr.io/timothyng11
+  pullPolicy: IfNotPresent
+  tag: 9814894206aab4b88a423b2e8674dcd9a3719205
