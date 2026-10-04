@@ -117,4 +117,21 @@ spec:
     - from:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicies.monitoringNamespace }} } }
       ports: [{ port: 16686 }]
+{{- if .Values.networkPolicies.allowLoadTest }}
+---
+# Local clusters only: the in-cluster load-test Job seeds buyers straight into
+# Postgres. Its traffic to the API goes through the ingress like anyone else's.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: loadtest-seed-postgres
+  labels: {{- include "ticket.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: postgres } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: loadtest } }
+      ports: [{ port: 5432 }]
+{{- end }}
 {{- end }}

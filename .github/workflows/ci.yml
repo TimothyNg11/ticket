@@ -171,7 +171,7 @@ jobs:
       - name: bring up the cluster and deploy
         run: deploy/kind/up.sh
       - name: smoke test through the ingress
-        run: BASE_URL=http://localhost go run ./tools/smoke
+        run: BASE_URL=http://localhost:18080 go run ./tools/smoke
       - name: 60-second flash sale, deleting an API pod every 15s
         run: deploy/kind/kill-api-during-sale.sh 60
       - name: diagnostics on failure

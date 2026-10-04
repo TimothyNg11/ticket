@@ -1,7 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"io"
+	"net/http"
 
 	"ticket/internal/db/sqlc"
 	"ticket/internal/httpapi/gen"
@@ -46,24 +50,41 @@ func (s *Server) GetEvent(ctx context.Context, req gen.GetEventRequestObject) (g
 	return gen.GetEvent200JSONResponse(out), nil
 }
 
-// GetSeatMap returns every seat of a published event with state and price.
+// GetSeatMap returns every seat of a published event with state and price. It
+// writes the cache's pre-encoded, gzip-compressed body without touching JSON.
 func (s *Server) GetSeatMap(ctx context.Context, req gen.GetSeatMapRequestObject) (gen.GetSeatMapResponseObject, error) {
-	sm, err := s.Cache.SeatMap(ctx, req.Id)
+	gz, err := s.Cache.SeatMapJSON(ctx, req.Id)
 	if err != nil {
 		return nil, err
 	}
-	resp := gen.GetSeatMap200JSONResponse{EventId: sm.EventID, Sections: make([]gen.SeatMapSection, 0, len(sm.Sections))}
-	for _, sec := range sm.Sections {
-		out := gen.SeatMapSection{Id: sec.ID, Name: sec.Name, Seats: make([]gen.SeatMapSeat, 0, len(sec.Seats))}
-		for _, seat := range sec.Seats {
-			out.Seats = append(out.Seats, gen.SeatMapSeat{
-				EventSeatId: seat.EventSeatID, Row: seat.Row, Number: int(seat.Number),
-				PriceCents: int(seat.PriceCents), State: seat.State,
-			})
-		}
-		resp.Sections = append(resp.Sections, out)
+	return seatMapBody{gz: gz, acceptGzip: acceptsGzip(ctx)}, nil
+}
+
+// seatMapBody is a GetSeatMap response that's already encoded.
+type seatMapBody struct {
+	gz         []byte
+	acceptGzip bool
+}
+
+// VisitGetSeatMapResponse implements gen.GetSeatMapResponseObject.
+func (b seatMapBody) VisitGetSeatMapResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Vary", "Accept-Encoding")
+	if b.acceptGzip {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write(b.gz)
+		return err
 	}
-	return resp, nil
+	// Rare: a client that can't take gzip gets it decompressed.
+	zr, err := gzip.NewReader(bytes.NewReader(b.gz))
+	if err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusOK)
+	// The data is our own cache entry; the cap just bounds a corrupted one.
+	_, err = io.Copy(w, io.LimitReader(zr, 64<<20))
+	return err
 }
 
 func toEvent(e sqlc.Event) gen.Event {

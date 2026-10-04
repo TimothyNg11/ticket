@@ -57,7 +57,7 @@ echo "== helm release"
 helm upgrade --install ticket deploy/helm/ticket -n "$NS" \
   -f deploy/helm/ticket/values-local.yaml --set image.tag="$TAG" --wait --timeout 6m
 
-echo "== ready: https://localhost (self-signed; use -k / --insecure)"
+echo "== ready: https://localhost:18443 or http://localhost:18080 (self-signed TLS; use -k / --insecure)"
 echo "   Grafana:    kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80   (dashboard: Ticket: On-sale)"
 echo "   Prometheus: kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090"
 echo "   Jaeger:     kubectl -n $NS port-forward svc/jaeger 16686"

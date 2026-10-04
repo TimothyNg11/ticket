@@ -33,25 +33,28 @@ type QueueSettings struct {
 }
 
 // SeatMap is every seat of an event grouped by section, with live state and price.
+//
+// The JSON tags match the API's SeatMap schema exactly, so the cache can store
+// and serve json.Marshal(SeatMap) as the response body.
 type SeatMap struct {
-	EventID  uuid.UUID
-	Sections []SeatMapSection
+	EventID  uuid.UUID        `json:"event_id"`
+	Sections []SeatMapSection `json:"sections"`
 }
 
 // SeatMapSection is one section of a seat map.
 type SeatMapSection struct {
-	ID    uuid.UUID
-	Name  string
-	Seats []SeatMapSeat
+	ID    uuid.UUID     `json:"id"`
+	Name  string        `json:"name"`
+	Seats []SeatMapSeat `json:"seats"`
 }
 
 // SeatMapSeat is one seat of a seat map.
 type SeatMapSeat struct {
-	EventSeatID uuid.UUID
-	Row         string
-	Number      int32
-	PriceCents  int32
-	State       string
+	EventSeatID uuid.UUID `json:"event_seat_id"`
+	Row         string    `json:"row"`
+	Number      int32     `json:"number"`
+	PriceCents  int32     `json:"price_cents"`
+	State       string    `json:"state"`
 }
 
 var errEventNotFound = apperr.NotFound("event")

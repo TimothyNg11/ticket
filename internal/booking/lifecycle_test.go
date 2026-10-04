@@ -378,3 +378,48 @@ func TestFlashSaleEndToEnd(t *testing.T) {
 	e.noViolations(t)
 	assert.Equal(t, 0, e.count(t, `SELECT count(*) FROM event_seats WHERE state = 'held'`), "every hold either converted or is still owned")
 }
+
+// TestInvariantsDetectEveryViolation plants each kind of violation directly in
+// the database and checks the checker counts it. It guards the invariant SQL
+// itself, which was rewritten for speed in Phase 9 (a correlated subquery per
+// order took 22 s at 21,000 orders).
+func TestInvariantsDetectEveryViolation(t *testing.T) {
+	e, _ := newPayEnv(t, 6, mock.Config{}, time.Second)
+	ctx := context.Background()
+	buy := func(seat uuid.UUID) booking.Order {
+		u := e.user(t)
+		h, err := e.svc.CreateHold(ctx, u, e.eventID, []uuid.UUID{seat})
+		require.NoError(t, err)
+		o, err := e.svc.Checkout(ctx, u, h.ID, "k")
+		require.NoError(t, err)
+		return o
+	}
+	o1, o2, o3 := buy(e.seats[0]), buy(e.seats[1]), buy(e.seats[2])
+	e.noViolations(t)
+	exec := func(sql string, args ...any) {
+		_, err := e.pool.Exec(ctx, sql, args...)
+		require.NoError(t, err)
+	}
+
+	// 1. A second valid ticket for a seat: drop the guard index to plant it.
+	exec(`DROP INDEX tickets_one_valid_per_seat`)
+	exec(`INSERT INTO tickets (order_id, event_seat_id, qr_token) SELECT order_id, event_seat_id, 'dup' FROM tickets WHERE order_id = $1`, o1.ID)
+	// 2. A sold seat whose order isn't confirmed.
+	exec(`UPDATE orders SET status = 'failed' WHERE id = $1`, o2.ID)
+	// 3. A confirmed order paid twice.
+	exec(`INSERT INTO payments (order_id, kind, amount_cents, status, idempotency_key) VALUES ($1, 'charge', 1, 'succeeded', 'x2')`, o3.ID)
+	// 4. A held seat with no active hold.
+	exec(`UPDATE holds SET status = 'expired' WHERE id IN (SELECT hold_id FROM orders WHERE id = $1)`, o3.ID)
+	u := e.user(t)
+	h, err := e.svc.CreateHold(ctx, u, e.eventID, e.seats[3:4])
+	require.NoError(t, err)
+	exec(`UPDATE holds SET status = 'released' WHERE id = $1`, h.ID)
+
+	v, err := e.svc.CheckInvariants(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, v.SeatsWithMultipleValidTickets)
+	assert.Equal(t, 1, v.SoldSeatsWithoutConfirmedSale)
+	assert.Equal(t, 1, v.ConfirmedOrdersTicketMismatch, "o1: 2 valid tickets for 1 sold seat")
+	assert.Equal(t, 1, v.ConfirmedOrdersNotPaidOnce)
+	assert.Equal(t, 1, v.HeldSeatsWithoutActiveHold)
+}

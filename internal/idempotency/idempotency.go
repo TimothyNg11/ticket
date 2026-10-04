@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"ticket/internal/apperr"
+	"ticket/internal/db"
 	"ticket/internal/db/sqlc"
 	"ticket/internal/metrics"
 )
@@ -77,12 +78,18 @@ func New(pool *pgxpool.Pool, userFrom func(context.Context) (uuid.UUID, bool),
 
 // applies reports whether a request needs a key: authenticated user writes under
 // /v1. Auth endpoints have no user yet, admin endpoints are operator tools, and
-// reads are naturally idempotent.
+// reads are naturally idempotent. Joining a waiting room is idempotent by
+// construction (rejoining keeps your place), so it skips the two Postgres writes
+// this middleware costs; at 50,000 joins in 30 s those writes were the database's
+// biggest load (Phase 9, ADR 0009).
 func applies(r *http.Request) bool {
 	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 		return false
 	}
 	p := r.URL.Path
+	if strings.HasPrefix(p, "/v1/events/") && strings.HasSuffix(p, "/queue") {
+		return false
+	}
 	return strings.HasPrefix(p, "/v1/") && !strings.HasPrefix(p, "/v1/auth/") && !strings.HasPrefix(p, "/v1/admin/")
 }
 
@@ -109,8 +116,13 @@ func (g *Guard) Handler(next http.Handler) http.Handler {
 		ctx := r.Context()
 		q := sqlc.New(g.pool)
 
-		claimed, err := q.ClaimIdempotencyKey(ctx, sqlc.ClaimIdempotencyKeyParams{
-			UserID: user, Key: key, RequestHash: hash, ExpiresAt: time.Now().Add(ttl),
+		var claimed int64
+		err = db.InAsyncCommitTx(ctx, g.pool, func(q *sqlc.Queries) error {
+			var err error
+			claimed, err = q.ClaimIdempotencyKey(ctx, sqlc.ClaimIdempotencyKeyParams{
+				UserID: user, Key: key, RequestHash: hash, ExpiresAt: time.Now().Add(ttl),
+			})
+			return err
 		})
 		if err != nil {
 			g.onError(w, r, err)
@@ -157,14 +169,15 @@ func (g *Guard) Handler(next http.Handler) http.Handler {
 		// record because the client hung up would let a retry run twice.
 		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		if rec.status >= 500 {
-			// Server-side failures aren't final answers; free the key so a retry runs.
-			err = q.DeleteIdempotencyKey(saveCtx, sqlc.DeleteIdempotencyKeyParams{UserID: user, Key: key})
-		} else {
-			err = q.SaveIdempotentResponse(saveCtx, sqlc.SaveIdempotentResponseParams{
+		err = db.InAsyncCommitTx(saveCtx, g.pool, func(q *sqlc.Queries) error {
+			if rec.status >= 500 {
+				// Server-side failures aren't final answers; free the key so a retry runs.
+				return q.DeleteIdempotencyKey(saveCtx, sqlc.DeleteIdempotencyKeyParams{UserID: user, Key: key})
+			}
+			return q.SaveIdempotentResponse(saveCtx, sqlc.SaveIdempotentResponseParams{
 				UserID: user, Key: key, ResponseStatus: ptr(statusCode(rec.status)), ResponseBody: rec.body.Bytes(),
 			})
-		}
+		})
 		if err != nil {
 			g.log.ErrorContext(ctx, "saving idempotent response", "err", err, "user_id", user, "key", key)
 		}

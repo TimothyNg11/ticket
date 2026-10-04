@@ -45,6 +45,8 @@ type Deps struct {
 	Room      *waitingroom.Room
 	// Draining is set during shutdown; readiness then fails so traffic moves away.
 	Draining *atomic.Bool
+	// DBHealth backs the readiness probe. Nil falls back to pinging the pool.
+	DBHealth *DBHealth
 	Limiter  *ratelimit.Limiter // nil disables rate limiting
 	// TrustProxy reads the client IP from X-Forwarded-For (set it only behind a
 	// proxy that overwrites that header, like the ingress).
@@ -118,6 +120,10 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		// character_not_in_repertoire: Postgres refuses NUL bytes in text. That is bad
 		// client input, so report it as such rather than as a server failure.
 		ae = apperr.Validation("text fields must not contain NUL characters")
+	} else if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
+		// The client hung up; nobody will read this response. 499 (nginx's
+		// "client closed request") keeps it out of the 5xx error rate.
+		ae = &apperr.Error{Status: 499, Code: "CLIENT_CLOSED_REQUEST", Message: "client closed the request"}
 	} else if !errors.As(err, &ae) {
 		s.Log.ErrorContext(r.Context(), "internal error",
 			"err", err, "request_id", middleware.GetReqID(r.Context()), "path", r.URL.Path)
@@ -128,6 +134,11 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	body.Error.Message = ae.Message
 	body.Error.RequestID = middleware.GetReqID(r.Context())
 	w.Header().Set("Content-Type", "application/json")
+	if ae.Status == http.StatusServiceUnavailable && w.Header().Get("Retry-After") == "" {
+		// Matches the payment circuit breaker's cooldown: retrying sooner can only
+		// fail fast again.
+		w.Header().Set("Retry-After", "10")
+	}
 	w.WriteHeader(ae.Status)
 	_ = json.NewEncoder(w).Encode(body)
 }

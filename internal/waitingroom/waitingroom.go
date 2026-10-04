@@ -180,3 +180,13 @@ func (w *Room) CheckAdmission(token string, userID, eventID uuid.UUID) error {
 	}
 	return nil
 }
+
+// PollAfter is how long a buyer at position should wait before polling again:
+// half their estimated wait, between 5 s and 2 minutes. Buyers far back in line
+// poll rarely; buyers near the front poll often enough not to miss admission.
+// This server-directed backoff is what keeps a 50,000-person queue from turning
+// into 10,000 status requests a second.
+func (r Rate) PollAfter(position int) time.Duration {
+	const minPoll, maxPoll = 5 * time.Second, 2 * time.Minute
+	return min(max(r.wait(position)/2, minPoll), maxPoll)
+}

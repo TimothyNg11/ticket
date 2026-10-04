@@ -1,5 +1,6 @@
 # Local Kubernetes cluster for the ticketing system: one control plane and two
-# workers, with host ports 80/443 mapped to the ingress controller.
+# workers. The ingress controller is reachable on host ports 18080 (HTTP) and
+# 18443 (HTTPS): 80/443 are often taken on developer machines (IIS, WSL relays).
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: ticket
@@ -12,8 +13,8 @@ nodes:
           kubeletExtraArgs:
             node-labels: "ingress-ready=true"
     extraPortMappings:
-      - { containerPort: 80, hostPort: 80, protocol: TCP }
-      - { containerPort: 443, hostPort: 443, protocol: TCP }
+      - { containerPort: 80, hostPort: 18080, protocol: TCP }
+      - { containerPort: 443, hostPort: 18443, protocol: TCP }
   - role: worker
   - role: worker
 networking:

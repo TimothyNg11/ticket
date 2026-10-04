@@ -33,6 +33,8 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, "http://payments:8081", c.PaymentsURL)
 	assert.InDelta(t, 1.0, c.RateLimitScale, 0)
 	assert.Equal(t, 4, c.HashConcurrency)
+	assert.Equal(t, 100, c.RedisPoolSize)
+	assert.Equal(t, 20, c.DBMaxConns)
 	assert.False(t, c.TrustProxy)
 }
 

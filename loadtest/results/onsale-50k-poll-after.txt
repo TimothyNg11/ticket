@@ -1,0 +1,44 @@
+[onsale-50k-poll-after] event 6a8426c4-4f1c-47d7-b481-f53dd383008e: 5000 seats, 50000 buyers, admit 500 every 10s
+  t= 10s admitted=165 bought=20 seats=45 lost_races=1
+  t= 20s admitted=764 bought=72 seats=172 lost_races=8
+  t= 30s admitted=1070 bought=192 seats=459 lost_races=163
+  t= 40s admitted=1359 bought=444 seats=1029 lost_races=174
+  t= 50s admitted=2084 bought=577 seats=1303 lost_races=247
+  t= 60s admitted=2410 bought=696 seats=1599 lost_races=406
+  t= 70s admitted=3098 bought=836 seats=1914 lost_races=724
+  t= 80s admitted=3366 bought=1042 seats=2380 lost_races=1457
+  t= 90s admitted=4072 bought=1378 seats=3089 lost_races=1772
+  t=100s admitted=4395 bought=1778 seats=3924 lost_races=2422
+  t=110s admitted=4760 bought=2010 seats=4443 lost_races=3028
+  t=120s admitted=5127 bought=2260 seats=4907 lost_races=4010
+  t=130s admitted=5304 bought=2306 seats=4982 lost_races=4644
+  t=140s admitted=5304 bought=2316 seats=4998 lost_races=5521
+  t=150s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=160s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=170s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=180s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=190s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=200s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=210s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=220s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=230s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=240s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=250s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=260s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=270s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=280s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=290s admitted=5304 bought=2317 seats=4999 lost_races=5609
+  t=300s admitted=5304 bought=2317 seats=4999 lost_races=5609
+
+[onsale-50k-poll-after] 50000 buyers in 5m8s; 5304 admitted, 2317 orders, 4999 seats sold, 5609 lost a seat race, 94 gave up
+sold out after 2m3s
+op                count      p50      p95      p99      max connwait99    5xx  retry   FAIL
+checkout           2318  13273ms  20173ms  24766ms  25800ms    12124ms      0     26      0
+hold               7927   5913ms  10455ms  13600ms  17690ms    13370ms      0     43      0
+queue_join        50000    726ms   2130ms   5456ms  29914ms    12386ms      0   1016      0
+queue_poll        67663    715ms   3190ms   5183ms  11629ms    11591ms      0    136      0
+release               1   8208ms   8208ms   8208ms   8208ms     3491ms      0      0      0
+seatmap           78430    880ms   5240ms   6491ms  29862ms    12259ms   4323    222      0
+total 206339 requests in 5m8s = 670 req/s
+invariants: {"confirmed_orders_not_paid_exactly_once":0,"confirmed_orders_ticket_mismatch":0,"held_seats_without_active_hold":0,"seats_with_multiple_valid_tickets":0,"sold_seats_without_confirmed_order":0,"total":0}
+ONSALE OK

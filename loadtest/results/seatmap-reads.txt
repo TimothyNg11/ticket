@@ -1,0 +1,66 @@
+time="2026-10-04T01:36:20Z" level=warning msg="Insufficient VUs, reached 3000 active VUs and cannot initialize more" executor=constant-arrival-rate scenario=r1500
+
+
+  █ THRESHOLDS 
+
+    http_req_duration{stage:1000rps}
+    ✗ 'p(99)<300' p(99)=507.53ms
+
+    http_req_duration{stage:1500rps}
+    ✗ 'p(99)<300' p(99)=5.67s
+
+    http_req_duration{stage:200rps}
+    ✓ 'p(99)<300' p(99)=72.55ms
+
+    http_req_duration{stage:500rps}
+    ✓ 'p(99)<300' p(99)=182.49ms
+
+    http_req_failed{stage:1000rps}
+    ✓ 'rate<0.01' rate=0.00%
+
+    http_req_failed{stage:1500rps}
+    ✓ 'rate<0.01' rate=0.00%
+
+    http_req_failed{stage:200rps}
+    ✓ 'rate<0.01' rate=0.00%
+
+    http_req_failed{stage:500rps}
+    ✓ 'rate<0.01' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 130715  661.870415/s
+    checks_succeeded...: 100.00% 130715 out of 130715
+    checks_failed......: 0.00%   0 out of 130715
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: p(50)=7.5ms    p(95)=2.73s   p(99)=4.93s    max=7s      
+      { expected_response:true }...: p(50)=7.5ms    p(95)=2.73s   p(99)=4.93s    max=7s      
+      { stage:1000rps }............: p(50)=4.41ms   p(95)=83.72ms p(99)=507.53ms max=905.78ms
+      { stage:1500rps }............: p(50)=610.02ms p(95)=4.08s   p(99)=5.67s    max=7s      
+      { stage:200rps }.............: p(50)=3.8ms    p(95)=11.26ms p(99)=72.55ms  max=205.2ms 
+      { stage:500rps }.............: p(50)=3.64ms   p(95)=36.33ms p(99)=182.49ms max=333.65ms
+    http_req_failed................: 0.00%  0 out of 130715
+      { stage:1000rps }............: 0.00%  0 out of 44647
+      { stage:1500rps }............: 0.00%  0 out of 54570
+      { stage:200rps }.............: 0.00%  0 out of 9001
+      { stage:500rps }.............: 0.00%  0 out of 22497
+    http_reqs......................: 130715 661.870415/s
+
+    EXECUTION
+    dropped_iterations.............: 13261  67.146567/s
+    iteration_duration.............: p(50)=7.79ms   p(95)=2.74s   p(99)=4.94s    max=7s      
+    iterations.....................: 130715 661.870415/s
+    vus............................: 24     min=0           max=3000
+    vus_max........................: 3445   min=625         max=3445
+
+    NETWORK
+    data_received..................: 16 GB  83 MB/s
+    data_sent......................: 22 MB  110 kB/s
+
+
+
+time="2026-10-04T01:36:27Z" level=error msg="thresholds on metrics 'http_req_duration{stage:1000rps}, http_req_duration{stage:1500rps}' have been crossed"

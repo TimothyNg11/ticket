@@ -25,7 +25,11 @@ spec:
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
-          args: ["-c", "max_connections=200", "-c", "shared_buffers=256MB"]
+          # commit_delay/commit_siblings: when several transactions commit at once,
+          # wait up to 0.2 ms so one WAL flush covers them all (group commit).
+          # Load tests showed commits bound by WAL flushes (Phase 9).
+          args: ["-c", "max_connections=200", "-c", "shared_buffers=256MB",
+                 "-c", "commit_delay=200", "-c", "commit_siblings=5"]
           env:
             - { name: POSTGRES_USER, value: {{ .Values.database.user }} }
             - { name: POSTGRES_DB, value: {{ .Values.database.name }} }

@@ -210,9 +210,12 @@ func TestSkipsAuthAdminGETAndAnonymous(t *testing.T) {
 		{"POST", "/v1/admin/venues", u},
 		{"GET", "/v1/orders", u},
 		{"POST", "/v1/events/e/holds", uuid.Nil}, // anonymous: let the handler 401
+		// Joining a queue is idempotent by construction (ZADD NX keeps your
+		// place), so it skips the two Postgres writes per request (Phase 9).
+		{"POST", "/v1/events/e/queue", u},
 	} {
 		r := h.do(t, c.method, c.path, c.user, "", `{}`)
 		assert.Equal(t, 201, r.status, c.path)
 	}
-	assert.EqualValues(t, 4, h.calls.Load())
+	assert.EqualValues(t, 5, h.calls.Load())
 }

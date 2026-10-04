@@ -1,7 +1,10 @@
 package cache_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -85,9 +88,12 @@ func TestSeatMapInvalidatedOnSeatChange(t *testing.T) {
 	_, err = e.book.CreateHold(ctx, user, e.eventID, e.seats[:1])
 	require.NoError(t, err)
 
+	// Within the 250 ms coalescing window a reader may still get the copy built
+	// just before the hold; after it, the hold must be visible. Never the 2 s TTL.
+	time.Sleep(300 * time.Millisecond)
 	sm, err := e.c.SeatMap(ctx, e.eventID)
 	require.NoError(t, err)
-	assert.Equal(t, "held", sm.Sections[0].Seats[0].State, "the hold is visible immediately, not after the TTL")
+	assert.Equal(t, "held", sm.Sections[0].Seats[0].State, "visible once the coalescing window has passed")
 }
 
 func TestStampedeRebuildsOnce(t *testing.T) {
@@ -108,20 +114,70 @@ func TestStampedeRebuildsOnce(t *testing.T) {
 	assert.EqualValues(t, 1, e.c.Stats.Rebuilds.Load(), "50 concurrent cold reads, one database query")
 }
 
-func TestOtherPodRebuildingServesStale(t *testing.T) {
+func TestOtherPodRebuildingServesLatest(t *testing.T) {
 	rdb := testutil.NewRedis(t)
 	e := newEnv(t, rdb)
 	ctx := context.Background()
-	_, err := e.c.SeatMap(ctx, e.eventID) // fills the stale copy
+	_, err := e.c.SeatMap(ctx, e.eventID) // builds v0 and the "latest" copy
 	require.NoError(t, err)
-	e.c.SeatsChanged(e.eventID, 0) // new version: current key is now empty
-	// Pretend another pod holds the rebuild lock for version 1.
+	// A change makes v1 current, and the rebuild window has passed...
+	e.c.SeatsChanged(e.eventID, 0)
+	require.NoError(t, rdb.Del(ctx, "seatmap:"+e.eventID.String()+":fresh").Err())
+	// ...but another pod holds the rebuild lock for v1.
 	require.NoError(t, rdb.Set(ctx, "lock:seatmap:"+e.eventID.String()+":v1", 1, time.Second).Err())
 
 	_, err = e.c.SeatMap(ctx, e.eventID)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, e.c.Stats.StaleServed.Load())
 	assert.EqualValues(t, 1, e.c.Stats.Rebuilds.Load(), "no second database read")
+}
+
+// Under a burst of purchases the version changes many times a second. Rebuilds
+// are coalesced: within 250 ms of a rebuild, readers get that copy instead of
+// rebuilding again, which bounds database load per event.
+func TestRebuildsAreCoalescedUnderWrites(t *testing.T) {
+	e := newEnv(t, testutil.NewRedis(t))
+	ctx := context.Background()
+	for range 20 {
+		e.c.SeatsChanged(e.eventID, 0)
+		_, err := e.c.SeatMap(ctx, e.eventID)
+		require.NoError(t, err)
+	}
+	assert.EqualValues(t, 1, e.c.Stats.Rebuilds.Load(), "20 changes in quick succession, one rebuild")
+	assert.EqualValues(t, 19, e.c.Stats.Coalesced.Load())
+
+	time.Sleep(300 * time.Millisecond) // past the coalescing window
+	e.c.SeatsChanged(e.eventID, 0)
+	_, err := e.c.SeatMap(ctx, e.eventID)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, e.c.Stats.Rebuilds.Load(), "the next change after the window is rebuilt")
+}
+
+// The cache hands out the finished, gzip-compressed response body, so serving
+// a seat map costs no JSON work per request.
+func TestSeatMapJSONIsGzippedAPIShape(t *testing.T) {
+	e := newEnv(t, testutil.NewRedis(t))
+	gz, err := e.c.SeatMapJSON(context.Background(), e.eventID)
+	require.NoError(t, err)
+	zr, err := gzip.NewReader(bytes.NewReader(gz))
+	require.NoError(t, err)
+	raw, err := io.ReadAll(zr)
+	require.NoError(t, err)
+	var body struct {
+		EventID  string `json:"event_id"`
+		Sections []struct {
+			Seats []struct {
+				EventSeatID string `json:"event_seat_id"`
+				PriceCents  int    `json:"price_cents"`
+				State       string `json:"state"`
+			} `json:"seats"`
+		} `json:"sections"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &body))
+	assert.Equal(t, e.eventID.String(), body.EventID)
+	assert.Len(t, body.Sections[0].Seats, 6)
+	assert.Equal(t, 100, body.Sections[0].Seats[0].PriceCents)
+	assert.Less(t, len(gz), len(raw), "compressed")
 }
 
 func TestAvailabilityCounter(t *testing.T) {
@@ -176,4 +232,38 @@ func TestRedisDownFallsBackToPostgres(t *testing.T) {
 	assert.Equal(t, 6, n)
 	assert.False(t, e.c.IsRevoked(ctx, "x"))
 	assert.Positive(t, e.c.Stats.Errors.Load())
+}
+
+// Requests that wait on a shared rebuild must not fail because the request
+// that started it went away. Phase 9 load tests found the opposite: the
+// rebuild ran on the first caller's context, so one disconnect failed every
+// waiter with "context canceled" (thousands of 500s under load).
+func TestSharedRebuildSurvivesLeaderDisconnect(t *testing.T) {
+	e := newEnv(t, testutil.NewRedis(t))
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	cache.SetBuildHook(e.c, func() {
+		once.Do(func() { close(started) })
+		<-release
+	})
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderDone := make(chan struct{})
+	go func() {
+		defer close(leaderDone)
+		_, _ = e.c.SeatMapJSON(leaderCtx, e.eventID)
+	}()
+	<-started // the leader is inside the rebuild
+
+	followerErr := make(chan error, 1)
+	go func() {
+		_, err := e.c.SeatMapJSON(context.Background(), e.eventID)
+		followerErr <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // let the follower join the flight
+	cancelLeader()                    // the first client hangs up
+	close(release)
+
+	require.NoError(t, <-followerErr, "a waiter must not inherit the leader's cancellation")
+	<-leaderDone
 }

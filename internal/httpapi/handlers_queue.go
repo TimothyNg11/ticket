@@ -33,7 +33,9 @@ func (s *Server) JoinQueue(ctx context.Context, req gen.JoinQueueRequestObject) 
 	if err != nil {
 		return nil, err
 	}
-	return gen.JoinQueue200JSONResponse(toQueueStatus(p)), nil
+	out := toQueueStatus(p, rateOf(ev.AdmitBatch, ev.AdmitIntervalSeconds))
+	s.markSoldOut(ctx, ev.ID, &out)
+	return gen.JoinQueue200JSONResponse(out), nil
 }
 
 // GetQueueStatus reports the caller's place in line, or their admission token.
@@ -42,12 +44,14 @@ func (s *Server) GetQueueStatus(ctx context.Context, req gen.GetQueueStatusReque
 	if err != nil {
 		return nil, err
 	}
+	var rate waitingroom.Rate
 	pass, p, err := s.Room.Status(ctx, req.Token, func(eventID uuid.UUID) waitingroom.Rate {
 		ev, err := s.Cache.Event(ctx, eventID)
 		if err != nil {
 			return waitingroom.Rate{}
 		}
-		return rateOf(ev.AdmitBatch, ev.AdmitIntervalSeconds)
+		rate = rateOf(ev.AdmitBatch, ev.AdmitIntervalSeconds)
+		return rate
 	})
 	switch {
 	case errors.Is(err, waitingroom.ErrNotQueued):
@@ -60,7 +64,19 @@ func (s *Server) GetQueueStatus(ctx context.Context, req gen.GetQueueStatusReque
 		// Queue tokens are bound to the account that joined.
 		return nil, apperr.NotFound("queue position")
 	}
-	return gen.GetQueueStatus200JSONResponse(toQueueStatus(p)), nil
+	out := toQueueStatus(p, rate)
+	s.markSoldOut(ctx, pass.EventID, &out)
+	return gen.GetQueueStatus200JSONResponse(out), nil
+}
+
+// markSoldOut tells waiting buyers when nothing is left, so they stop polling
+// instead of waiting for an admission that can't help them. It reads the cached
+// availability counter, so it costs one Redis GET.
+func (s *Server) markSoldOut(ctx context.Context, eventID uuid.UUID, out *gen.QueueStatus) {
+	if n, err := s.Cache.Available(ctx, eventID); err == nil && n == 0 {
+		soldOut := true
+		out.SoldOut = &soldOut
+	}
 }
 
 // checkAdmission enforces the waiting room on holds: if the event has a queue,
@@ -83,15 +99,15 @@ func rateOf(batch, intervalSeconds int32) waitingroom.Rate {
 	return waitingroom.Rate{Batch: int(batch), Interval: secs(intervalSeconds)}
 }
 
-func toQueueStatus(p waitingroom.Position) gen.QueueStatus {
+func toQueueStatus(p waitingroom.Position, rate waitingroom.Rate) gen.QueueStatus {
 	out := gen.QueueStatus{QueueToken: p.QueueToken, Admitted: p.Admitted}
 	if p.Admitted {
 		out.AdmissionToken = &p.AdmissionToken
 		out.AdmissionExpiresAt = &p.AdmissionExpires
 		return out
 	}
-	pos, wait := p.Position, int(p.EstimatedWait.Seconds())
-	out.Position, out.EstimatedWaitSeconds = &pos, &wait
+	pos, wait, poll := p.Position, int(p.EstimatedWait.Seconds()), int(rate.PollAfter(p.Position).Seconds())
+	out.Position, out.EstimatedWaitSeconds, out.PollAfterSeconds = &pos, &wait, &poll
 	return out
 }
 

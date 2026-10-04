@@ -1,0 +1,97 @@
+[baseline] event 91998076-bf24-46ee-972a-dc2501baf9d7: 5000 seats, 50000 buyers, admit 500 every 10s
+  t= 10s admitted=13 bought=0 seats=0 lost_races=0
+  t= 20s admitted=89 bought=0 seats=0 lost_races=0
+  t= 30s admitted=158 bought=0 seats=0 lost_races=0
+  t= 40s admitted=241 bought=0 seats=0 lost_races=0
+  t= 50s admitted=270 bought=0 seats=0 lost_races=0
+  t= 60s admitted=396 bought=0 seats=0 lost_races=0
+  t= 70s admitted=513 bought=1 seats=2 lost_races=0
+  t= 80s admitted=594 bought=1 seats=2 lost_races=0
+  t= 90s admitted=684 bought=1 seats=2 lost_races=0
+  t=100s admitted=803 bought=3 seats=7 lost_races=0
+  t=110s admitted=803 bought=3 seats=7 lost_races=0
+  t=120s admitted=1003 bought=11 seats=30 lost_races=1
+  t=130s admitted=1038 bought=11 seats=30 lost_races=1
+  t=140s admitted=1055 bought=11 seats=30 lost_races=1
+  t=150s admitted=1095 bought=11 seats=30 lost_races=1
+  t=160s admitted=1095 bought=11 seats=30 lost_races=1
+  t=170s admitted=1356 bought=12 seats=31 lost_races=1
+  t=180s admitted=1439 bought=16 seats=38 lost_races=2
+  t=190s admitted=1439 bought=16 seats=38 lost_races=2
+  t=200s admitted=1846 bought=16 seats=38 lost_races=5
+  t=210s admitted=3469 bought=16 seats=38 lost_races=5
+  t=220s admitted=3616 bought=17 seats=40 lost_races=5
+  t=230s admitted=4176 bought=33 seats=78 lost_races=11
+  t=240s admitted=5464 bought=34 seats=80 lost_races=13
+  t=250s admitted=6131 bought=34 seats=80 lost_races=13
+  t=260s admitted=6308 bought=35 seats=81 lost_races=13
+  t=270s admitted=8200 bought=35 seats=81 lost_races=14
+  t=280s admitted=8276 bought=53 seats=124 lost_races=29
+  t=290s admitted=8276 bought=53 seats=124 lost_races=29
+  t=300s admitted=8340 bought=59 seats=137 lost_races=114
+  t=310s admitted=8469 bought=81 seats=185 lost_races=277
+  t=320s admitted=8777 bought=87 seats=198 lost_races=293
+  t=330s admitted=8777 bought=87 seats=198 lost_races=293
+  t=340s admitted=9163 bought=141 seats=319 lost_races=381
+  t=350s admitted=9665 bought=190 seats=444 lost_races=816
+  t=360s admitted=9755 bought=270 seats=631 lost_races=1089
+  t=370s admitted=9793 bought=275 seats=641 lost_races=1188
+  t=380s admitted=10232 bought=324 seats=751 lost_races=1378
+  t=390s admitted=11036 bought=402 seats=916 lost_races=1540
+  t=400s admitted=11166 bought=432 seats=976 lost_races=1590
+  t=410s admitted=11606 bought=472 seats=1053 lost_races=1721
+  t=420s admitted=11981 bought=636 seats=1356 lost_races=2128
+  t=430s admitted=12110 bought=658 seats=1400 lost_races=2213
+  t=440s admitted=12269 bought=701 seats=1480 lost_races=2280
+  t=450s admitted=13134 bought=939 seats=2000 lost_races=2990
+  t=460s admitted=13346 bought=1076 seats=2309 lost_races=4339
+  t=470s admitted=13346 bought=1077 seats=2311 lost_races=4377
+  t=480s admitted=13610 bought=1204 seats=2592 lost_races=4708
+  t=490s admitted=13718 bought=1266 seats=2709 lost_races=4951
+  t=500s admitted=14023 bought=1344 seats=2866 lost_races=5212
+  t=510s admitted=14023 bought=1344 seats=2866 lost_races=5212
+  t=520s admitted=14571 bought=1415 seats=2989 lost_races=5680
+  t=530s admitted=15208 bought=1587 seats=3346 lost_races=6566
+  t=540s admitted=15741 bought=1686 seats=3547 lost_races=7009
+  t=550s admitted=16230 bought=1707 seats=3587 lost_races=7446
+  t=560s admitted=17383 bought=1789 seats=3739 lost_races=7968
+  t=570s admitted=17879 bought=1944 seats=4012 lost_races=8672
+  t=580s admitted=17976 bought=1973 seats=4064 lost_races=8844
+  t=590s admitted=18300 bought=2025 seats=4159 lost_races=9489
+  t=600s admitted=18450 bought=2030 seats=4167 lost_races=10446
+  t=610s admitted=18576 bought=2032 seats=4169 lost_races=11336
+  t=620s admitted=18576 bought=2032 seats=4169 lost_races=11336
+  t=630s admitted=18744 bought=2032 seats=4169 lost_races=11690
+  t=640s admitted=18972 bought=2038 seats=4180 lost_races=13039
+  t=650s admitted=19289 bought=2077 seats=4253 lost_races=14256
+  t=660s admitted=19681 bought=2094 seats=4281 lost_races=14456
+  t=670s admitted=20359 bought=2105 seats=4297 lost_races=14873
+  t=680s admitted=20701 bought=2105 seats=4297 lost_races=16587
+  t=690s admitted=21396 bought=2110 seats=4302 lost_races=17706
+  t=700s admitted=21771 bought=2110 seats=4302 lost_races=18690
+  t=710s admitted=21836 bought=2110 seats=4302 lost_races=19809
+  t=720s admitted=21930 bought=2111 seats=4303 lost_races=20828
+  t=730s admitted=22071 bought=2112 seats=4304 lost_races=22017
+  t=740s admitted=22159 bought=2113 seats=4305 lost_races=22905
+  t=750s admitted=22245 bought=2116 seats=4309 lost_races=23989
+  t=760s admitted=22314 bought=2117 seats=4311 lost_races=25404
+  t=770s admitted=22377 bought=2132 seats=4338 lost_races=26793
+  t=780s admitted=22415 bought=2148 seats=4368 lost_races=28279
+  t=790s admitted=22449 bought=2148 seats=4368 lost_races=28520
+  t=800s admitted=22483 bought=2151 seats=4372 lost_races=29019
+  t=810s admitted=22502 bought=2154 seats=4376 lost_races=30554
+  t=820s admitted=22509 bought=2156 seats=4378 lost_races=31428
+  t=830s admitted=22515 bought=2157 seats=4380 lost_races=32927
+
+[baseline] 50000 buyers in 13m56s; 22515 admitted, 2165 orders, 4391 seats sold, 33422 lost a seat race, 25213 gave up
+sold out after 9m49s
+op                count      p50      p95      p99      max connwait99    5xx  retry   FAIL
+checkout           2168   2175ms   5867ms   7313ms  10446ms    28651ms      0   7502    317
+hold              35907    511ms   2888ms   4517ms   9665ms    28699ms      0  70995   1818
+queue_join        32949    434ms   2060ms   3514ms  10449ms    29580ms      0 111134  17051
+queue_poll        58352    377ms   2548ms   5218ms  11115ms    29491ms    744 152400   7353
+seatmap          100498    496ms   2897ms   5538ms  10985ms    29267ms     47 278225  20148
+total 229874 requests in 13m56s = 275 req/s
+invariants: {"confirmed_orders_not_paid_exactly_once":0,"confirmed_orders_ticket_mismatch":0,"held_seats_without_active_hold":0,"seats_with_multiple_valid_tickets":0,"sold_seats_without_confirmed_order":0,"total":0}
+ONSALE FAIL: 46687 requests failed after retries
+exit status 1

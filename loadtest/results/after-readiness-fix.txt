@@ -1,0 +1,73 @@
+[after-readiness-fix] event c14b8d3c-df20-43e6-af0c-554e8d272264: 5000 seats, 50000 buyers, admit 500 every 10s
+  t= 10s admitted=28 bought=8 seats=17 lost_races=0
+  t= 20s admitted=72 bought=11 seats=25 lost_races=0
+  t= 30s admitted=125 bought=12 seats=29 lost_races=0
+  t= 40s admitted=210 bought=14 seats=34 lost_races=0
+  t= 50s admitted=241 bought=16 seats=38 lost_races=0
+  t= 60s admitted=241 bought=16 seats=38 lost_races=0
+  t= 70s admitted=579 bought=17 seats=40 lost_races=0
+  t= 80s admitted=647 bought=19 seats=45 lost_races=0
+  t= 90s admitted=647 bought=19 seats=45 lost_races=0
+  t=100s admitted=860 bought=22 seats=52 lost_races=1
+  t=110s admitted=1050 bought=22 seats=52 lost_races=1
+  t=120s admitted=1050 bought=22 seats=52 lost_races=1
+  t=130s admitted=1463 bought=41 seats=102 lost_races=13
+  t=140s admitted=1587 bought=41 seats=102 lost_races=13
+  t=150s admitted=1588 bought=41 seats=102 lost_races=13
+  t=160s admitted=1813 bought=43 seats=106 lost_races=27
+  t=170s admitted=2239 bought=43 seats=106 lost_races=28
+  t=180s admitted=2239 bought=43 seats=106 lost_races=28
+  t=190s admitted=2307 bought=75 seats=174 lost_races=123
+  t=200s admitted=2502 bought=76 seats=178 lost_races=128
+  t=210s admitted=2507 bought=76 seats=178 lost_races=128
+  t=220s admitted=2585 bought=83 seats=191 lost_races=154
+  t=230s admitted=3609 bought=85 seats=195 lost_races=177
+  t=240s admitted=3651 bought=85 seats=195 lost_races=177
+  t=250s admitted=3797 bought=88 seats=201 lost_races=258
+  t=260s admitted=4707 bought=90 seats=205 lost_races=290
+  t=270s admitted=4808 bought=90 seats=205 lost_races=290
+  t=280s admitted=4833 bought=197 seats=455 lost_races=578
+  t=290s admitted=5171 bought=209 seats=481 lost_races=747
+  t=300s admitted=5704 bought=209 seats=481 lost_races=747
+  t=310s admitted=5828 bought=209 seats=481 lost_races=747
+  t=320s admitted=6172 bought=209 seats=481 lost_races=747
+  t=330s admitted=8123 bought=214 seats=494 lost_races=748
+  t=340s admitted=8339 bought=240 seats=552 lost_races=812
+  t=350s admitted=8365 bought=240 seats=552 lost_races=839
+  t=360s admitted=8662 bought=240 seats=552 lost_races=849
+  t=370s admitted=9123 bought=325 seats=729 lost_races=1309
+  t=380s admitted=9163 bought=332 seats=744 lost_races=1557
+  t=390s admitted=9205 bought=332 seats=744 lost_races=1557
+  t=400s admitted=9531 bought=333 seats=748 lost_races=1573
+  t=410s admitted=9733 bought=333 seats=748 lost_races=1575
+  t=420s admitted=9746 bought=333 seats=748 lost_races=1599
+  t=430s admitted=9876 bought=335 seats=753 lost_races=1631
+  t=440s admitted=10196 bought=357 seats=799 lost_races=1886
+  t=450s admitted=10436 bought=357 seats=799 lost_races=1928
+  t=460s admitted=10688 bought=365 seats=816 lost_races=1964
+  t=470s admitted=11346 bought=367 seats=819 lost_races=2020
+  t=480s admitted=12135 bought=375 seats=836 lost_races=2099
+  t=490s admitted=12377 bought=475 seats=1038 lost_races=2376
+  t=500s admitted=12809 bought=559 seats=1209 lost_races=2846
+  t=510s admitted=13427 bought=562 seats=1213 lost_races=2975
+  t=520s admitted=13569 bought=579 seats=1244 lost_races=3166
+  t=530s admitted=14074 bought=582 seats=1247 lost_races=3423
+  t=540s admitted=14074 bought=593 seats=1261 lost_races=3959
+  t=550s admitted=14074 bought=636 seats=1345 lost_races=4556
+  t=560s admitted=14074 bought=731 seats=1518 lost_races=5135
+  t=570s admitted=14074 bought=746 seats=1547 lost_races=5669
+  t=580s admitted=14074 bought=801 seats=1666 lost_races=5915
+  t=590s admitted=14074 bought=812 seats=1686 lost_races=5973
+  t=600s admitted=14074 bought=812 seats=1686 lost_races=5976
+  t=610s admitted=14074 bought=812 seats=1686 lost_races=5979
+
+[after-readiness-fix] 50000 buyers in 10m11s; 14074 admitted, 812 orders, 1686 seats sold, 5980 lost a seat race, 32528 gave up
+sold out after 8m50s
+op                count      p50      p95      p99      max connwait99    5xx  retry   FAIL
+checkout           2119    272ms   2958ms   4352ms  11679ms    29237ms      1   5045    173
+hold               9673    265ms   3475ms   5047ms  29551ms    29339ms      2  12604    228
+queue_join        26192    358ms    904ms   1142ms   1863ms    29568ms      0 125609  23808
+queue_poll        38605    161ms    987ms   1953ms  13176ms    29915ms      0  78936   8713
+seatmap           56016    801ms   3033ms   4128ms  13262ms    29768ms   7849 133445  17687
+total 132605 requests in 10m11s = 217 req/s
+invariants: {"confirmed_orders_not_paid_exactly_once":0,"confirmed_orders_ticket_mismatch":0,"held_seats_without_active_hold":0,"seats_with_multiple_valid_tickets":0,"sold_seats_without_confirmed_order":0,"total":0}

@@ -33,6 +33,12 @@ type Config struct {
 	DrainDelay time.Duration
 	// HashConcurrency caps simultaneous Argon2id computations (19 MiB each).
 	HashConcurrency int
+	// RedisPoolSize is the Redis connection pool size per process. go-redis's
+	// default is 10 per CPU, and a 1-CPU container gets 10 connections for
+	// hundreds of concurrent requests (Phase 9).
+	RedisPoolSize int
+	// DBMaxConns is the Postgres (PgBouncer) pool size per process.
+	DBMaxConns int
 	// AdminEmails lists (lower-cased) emails that receive the admin role when they
 	// register. It is how the first admin is bootstrapped; see docs/decisions/0002.
 	AdminEmails map[string]bool
@@ -51,6 +57,8 @@ func Load(getenv func(string) string) (Config, error) {
 		TrustProxy:       getenv("TRUST_PROXY") == "true",
 		RateLimitScale:   1,
 		HashConcurrency:  4,
+		RedisPoolSize:    100,
+		DBMaxConns:       20,
 		AdminEmails:      map[string]bool{},
 	}
 	if c.HTTPAddr == "" {
@@ -78,6 +86,18 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("ARGON2_CONCURRENCY must be a positive integer, got %q", v)
 		}
 		c.HashConcurrency = n
+	}
+	for _, setting := range []struct {
+		key string
+		dst *int
+	}{{"REDIS_POOL_SIZE", &c.RedisPoolSize}, {"DB_MAX_CONNS", &c.DBMaxConns}} {
+		if v := getenv(setting.key); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return Config{}, fmt.Errorf("%s must be a positive integer, got %q", setting.key, v)
+			}
+			*setting.dst = n
+		}
 	}
 	if v := getenv("RATE_LIMIT_SCALE"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)

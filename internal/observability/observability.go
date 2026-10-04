@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -105,4 +106,25 @@ func RegisterPoolMetrics(pool *pgxpool.Pool) {
 	prometheus.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
 		Name: "ticket_db_pool_empty_acquires_total", Help: "Acquires that had to wait because no connection was idle.",
 	}, func() float64 { return float64(pool.Stat().EmptyAcquireCount()) }))
+}
+
+// RegisterRedisPoolMetrics exports go-redis connection pool statistics. A pool
+// that's too small shows up as waits and timeouts here while CPU stays low:
+// requests queue for a connection rather than doing work.
+func RegisterRedisPoolMetrics(rdb *redis.Client) {
+	gauge := func(name, help string, f func(*redis.PoolStats) float64) {
+		prometheus.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help},
+			func() float64 { return f(rdb.PoolStats()) }))
+	}
+	counter := func(name, help string, f func(*redis.PoolStats) float64) {
+		prometheus.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{Name: name, Help: help},
+			func() float64 { return f(rdb.PoolStats()) }))
+	}
+	gauge("ticket_redis_pool_total_conns", "Open Redis connections.", func(s *redis.PoolStats) float64 { return float64(s.TotalConns) })
+	gauge("ticket_redis_pool_idle_conns", "Idle Redis connections.", func(s *redis.PoolStats) float64 { return float64(s.IdleConns) })
+	counter("ticket_redis_pool_waits_total", "Times a command waited for a free connection.", func(s *redis.PoolStats) float64 { return float64(s.WaitCount) })
+	counter("ticket_redis_pool_wait_seconds_total", "Total time spent waiting for a connection.", func(s *redis.PoolStats) float64 {
+		return float64(s.WaitDurationNs) / 1e9
+	})
+	counter("ticket_redis_pool_timeouts_total", "Commands that gave up waiting for a connection.", func(s *redis.PoolStats) float64 { return float64(s.Timeouts) })
 }
