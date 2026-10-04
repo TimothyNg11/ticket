@@ -30,15 +30,18 @@ var invariantQueries = []struct {
 	{func(v *Violations) *int { return &v.SoldSeatsWithoutConfirmedSale }, `
 		SELECT count(*) FROM event_seats es LEFT JOIN orders o ON o.id = es.order_id
 		WHERE es.state = 'sold' AND (o.id IS NULL OR o.status <> 'confirmed')`},
+	// Set-based: count valid tickets and sold seats per confirmed order with one
+	// pass each, instead of two subqueries per order (22 s at 21,000 orders).
 	{func(v *Violations) *int { return &v.ConfirmedOrdersTicketMismatch }, `
 		SELECT count(*) FROM orders o
-		WHERE o.status = 'confirmed' AND
-		  (SELECT count(*) FROM tickets t WHERE t.order_id = o.id AND t.status = 'valid') <>
-		  (SELECT count(*) FROM event_seats es WHERE es.order_id = o.id AND es.state = 'sold')`},
+		LEFT JOIN (SELECT order_id, count(*) n FROM tickets WHERE status = 'valid' GROUP BY order_id) t ON t.order_id = o.id
+		LEFT JOIN (SELECT order_id, count(*) n FROM event_seats WHERE state = 'sold' GROUP BY order_id) s ON s.order_id = o.id
+		WHERE o.status = 'confirmed' AND coalesce(t.n, 0) <> coalesce(s.n, 0)`},
 	{func(v *Violations) *int { return &v.ConfirmedOrdersNotPaidOnce }, `
 		SELECT count(*) FROM orders o
-		WHERE o.status = 'confirmed' AND
-		  (SELECT count(*) FROM payments p WHERE p.order_id = o.id AND p.kind = 'charge' AND p.status = 'succeeded') <> 1`},
+		LEFT JOIN (SELECT order_id, count(*) n FROM payments WHERE kind = 'charge' AND status = 'succeeded' GROUP BY order_id) p
+		  ON p.order_id = o.id
+		WHERE o.status = 'confirmed' AND coalesce(p.n, 0) <> 1`},
 	{func(v *Violations) *int { return &v.HeldSeatsWithoutActiveHold }, `
 		SELECT count(*) FROM event_seats es LEFT JOIN holds h ON h.id = es.hold_id
 		WHERE es.state = 'held' AND (h.id IS NULL OR h.status <> 'active')`},

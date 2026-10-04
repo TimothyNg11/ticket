@@ -81,12 +81,15 @@ func TestQueueRequiredForHolds(t *testing.T) {
 	var joined [2]struct {
 		QueueToken string `json:"queue_token"`
 		Position   int    `json:"position"`
+		PollAfter  int    `json:"poll_after_seconds"`
 	}
 	for i := range 2 {
 		status, body = call(t, e.srv, "POST", "/v1/events/"+eventID.String()+"/queue", toks[i], nil)
 		require.Equal(t, 200, status, string(body))
 		require.NoError(t, json.Unmarshal(body, &joined[i]))
 		assert.Equal(t, i+1, joined[i].Position)
+		// 1 admitted per 10s: position 1 waits 10s (poll in 5s), position 2 waits 20s (poll in 10s).
+		assert.Equal(t, []int{5, 10}[i], joined[i].PollAfter)
 		time.Sleep(2 * time.Millisecond)
 	}
 	room := waitingroom.New(testutil.NewRedis(t), auth.NewPassIssuer(testSecret))
@@ -216,4 +219,39 @@ func parallel(n, workers int, fn func(i int)) {
 	}
 	close(jobs)
 	wg.Wait()
+}
+
+func TestQueueReportsSoldOut(t *testing.T) {
+	e := newTestEnv(t)
+	eventID, seats := queuedEvent(t, e, 1, 10)
+	_, toks := bulkUsers(t, e, 2)
+	status, body := call(t, e.srv, "POST", "/v1/events/"+eventID.String()+"/queue", toks[0], nil)
+	require.Equal(t, 200, status)
+	assert.NotContains(t, string(body), `"sold_out":true`)
+
+	// The only seat goes (held counts as gone: it isn't available).
+	room := waitingroom.New(testutil.NewRedis(t), auth.NewPassIssuer(testSecret))
+	_, err := room.AdmitNext(context.Background(), eventID, waitingroom.Rate{Batch: 10, Interval: time.Second})
+	require.NoError(t, err)
+	p, err := room.Join(context.Background(), eventID, uuidOf(t, e, toks[0]), waitingroom.Rate{Batch: 10, Interval: time.Second})
+	require.NoError(t, err)
+	req, _ := http.NewRequest("POST", e.srv.URL+"/v1/events/"+eventID.String()+"/holds", jsonBody(t, map[string]any{"seat_ids": seats}))
+	req.Header.Set("Authorization", "Bearer "+toks[0])
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	req.Header.Set("Admission-Token", p.AdmissionToken)
+	resp, err := e.srv.Client().Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, 201, resp.StatusCode)
+
+	status, body = call(t, e.srv, "POST", "/v1/events/"+eventID.String()+"/queue", toks[1], nil)
+	require.Equal(t, 200, status)
+	assert.Contains(t, string(body), `"sold_out":true`)
+}
+
+func uuidOf(t *testing.T, e *testEnv, token string) uuid.UUID {
+	t.Helper()
+	c, err := e.tokens.Verify(token)
+	require.NoError(t, err)
+	return c.UserID
 }

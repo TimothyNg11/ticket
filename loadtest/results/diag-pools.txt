@@ -1,0 +1,83 @@
+[diag-pools] event 07a352bb-79d2-4bd9-ad9d-3b2ee6ebfc1e: 5000 seats, 50000 buyers, admit 500 every 10s
+  t= 11s admitted=96 bought=0 seats=0 lost_races=0
+  t= 20s admitted=706 bought=27 seats=66 lost_races=3
+  t= 30s admitted=992 bought=90 seats=205 lost_races=69
+  t= 40s admitted=1123 bought=260 seats=581 lost_races=130
+  t= 50s admitted=1859 bought=449 seats=1008 lost_races=167
+  t= 60s admitted=2511 bought=584 seats=1326 lost_races=271
+  t= 71s admitted=3109 bought=696 seats=1577 lost_races=641
+  t= 80s admitted=3419 bought=838 seats=1902 lost_races=1067
+  t= 90s admitted=4080 bought=1109 seats=2495 lost_races=1545
+  t=100s admitted=4491 bought=1551 seats=3397 lost_races=2032
+  t=110s admitted=4999 bought=1776 seats=3853 lost_races=2514
+  t=120s admitted=5388 bought=2041 seats=4397 lost_races=3198
+  t=130s admitted=5695 bought=2289 seats=4894 lost_races=4093
+  t=140s admitted=5935 bought=2333 seats=4961 lost_races=4575
+  t=150s admitted=6159 bought=2360 seats=4995 lost_races=5241
+  t=160s admitted=6555 bought=2365 seats=5000 lost_races=6043
+  t=170s admitted=7106 bought=2365 seats=5000 lost_races=6194
+  t=181s admitted=7434 bought=2365 seats=5000 lost_races=6194
+  t=191s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=200s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=210s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=220s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=230s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=240s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=250s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=260s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=270s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=280s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=290s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=300s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=310s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=320s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=330s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=340s admitted=7441 bought=2365 seats=5000 lost_races=6194
+  t=350s admitted=7441 bought=2365 seats=5000 lost_races=6194
+
+[diag-pools] 50000 buyers in 5m59s; 7441 admitted, 2365 orders, 5000 seats sold, 6194 lost a seat race, 153 gave up
+sold out after 2m20s
+op                count      p50      p95      p99      max connwait99    5xx  retry   FAIL
+checkout           2365  14040ms  23761ms  27188ms  28112ms    14931ms      0     47      0
+hold               8559   5713ms  13264ms  15642ms  18103ms    17473ms      0      0      0
+queue_join        50000   1084ms   4584ms   8148ms  14460ms    15086ms      0    225      0
+queue_poll        80732   1015ms   3821ms   5490ms  12863ms    17270ms      0      0      0
+seatmap           94240   1270ms   5305ms   6711ms  14213ms    17509ms   4434      0      0
+total 235896 requests in 5m59s = 657 req/s
+invariants: {"confirmed_orders_not_paid_exactly_once":0,"confirmed_orders_ticket_mismatch":0,"held_seats_without_active_hold":0,"seats_with_multiple_valid_tickets":0,"sold_seats_without_confirmed_order":0,"total":0}
+ONSALE OK
+== server side, 379s window
+  p50 latency s by route             /v1/events/{id}/holds               4.440
+  p50 latency s by route             /v1/events/{id}/queue               1.102
+  p50 latency s by route             /v1/events/{id}/seatmap             0.621
+  p50 latency s by route             /v1/holds/{id}                        nan
+  p50 latency s by route             /v1/holds/{id}/checkout            10.000
+  p50 latency s by route             /v1/queue/{token}                   0.616
+  p99 latency s by route             /v1/events/{id}/holds              10.000
+  p99 latency s by route             /v1/events/{id}/queue               8.634
+  p99 latency s by route             /v1/events/{id}/seatmap             9.032
+  p99 latency s by route             /v1/holds/{id}                        nan
+  p99 latency s by route             /v1/holds/{id}/checkout            10.000
+  p99 latency s by route             /v1/queue/{token}                   4.784
+  requests/s by route                /v1/events/{id}/holds              22.962
+  requests/s by route                /v1/events/{id}/queue             124.927
+  requests/s by route                /v1/events/{id}/seatmap           254.531
+  requests/s by route                /v1/holds/{id}                      0.000
+  requests/s by route                /v1/holds/{id}/checkout             6.294
+  requests/s by route                /v1/queue/{token}                 218.060
+  5xx/s                                                                 11.942
+  seat-map cache lookups/s           coalesced                          65.308
+  seat-map cache lookups/s           hit                               111.448
+  seat-map cache lookups/s           miss                               78.046
+  seat-map cache lookups/s           stale                               5.257
+  payment charge p99 s                                                   0.255
+  db pool: wait s per s                                                171.052
+  db pool: peak in use / max                                             1.000
+  redis pool: wait s per s                                             347.028
+  cpu cores by container (avg)       api                                 1.892
+  cpu cores by container (avg)       onsale                              1.494
+  cpu cores by container (avg)       pgbouncer                           0.125
+  cpu cores by container (avg)       postgres                            1.244
+  cpu cores by container (avg)       redis                               0.398
+  cpu cores by container (avg)       traefik                             0.919
+  api pods (max)                                                         6.000

@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -222,10 +223,17 @@ func request(method, path, token string, body, out any) (int, error) {
 	}
 	key := uuid.NewString()
 	var lastErr error
+	var retryAfter time.Duration
 	for attempt := range 6 {
 		if attempt > 0 {
 			retries.Add(1)
-			time.Sleep(time.Duration(50*(1<<attempt)) * time.Millisecond)
+			// Honor the server's Retry-After (a 503 during a payment outage asks
+			// for the circuit breaker's cooldown); otherwise back off exponentially.
+			wait := time.Duration(50*(1<<attempt)) * time.Millisecond
+			if retryAfter > 0 {
+				wait = retryAfter
+			}
+			time.Sleep(wait)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		req, err := http.NewRequestWithContext(ctx, method, *base+path, bytes.NewReader(b))
@@ -250,6 +258,10 @@ func request(method, path, token string, body, out any) (int, error) {
 		switch resp.StatusCode {
 		case 502, 503, 504:
 			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			retryAfter = 0
+			if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
+				retryAfter = time.Duration(min(s, 30)) * time.Second
+			}
 			continue
 		}
 		if out != nil && resp.StatusCode < 300 {

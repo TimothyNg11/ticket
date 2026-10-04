@@ -31,8 +31,10 @@ spec:
       secretName: api-tls
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host }}
-      http:
+    # anyHost (local clusters) routes every Host header, so the API also answers
+    # on the machine's IP address, not only on "localhost".
+    - {{ if not .Values.ingress.anyHost }}host: {{ .Values.ingress.host }}
+      {{ end }}http:
         paths:
           # Only the public API is exposed. /metrics and health checks stay
           # cluster-internal (spec: internal-only endpoints not public).

@@ -9,7 +9,7 @@ cd "$(dirname "$0")/../.."
 DURATION=${1:-60}
 NS=ticket
 
-go run ./tools/flashsale -base https://localhost -insecure \
+go run ./tools/flashsale -base https://localhost:18443 -insecure \
   -duration "${DURATION}s" -users 300 -seats 150 -concurrency 60 &
 SALE=$!
 

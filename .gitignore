@@ -3,3 +3,5 @@
 *.exe
 coverage.out
 .superpowers/
+loadtest-tokens.txt
+loadtest-admin-token.txt

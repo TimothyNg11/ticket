@@ -17,6 +17,9 @@ config:
   # Multiplies every rate limit. 1 in production; load tests raise it.
   rateLimitScale: "1"
   drainDelay: 5s
+  # Internal-only Go profiler port; empty disables it.
+  pprofAddr: ""
+
 
 api:
   replicas: 3
@@ -94,6 +97,7 @@ ingress:
   enabled: true
   className: traefik
   host: ticket.localhost
+  anyHost: false
   tls:
     enabled: true
     # selfSigned issues a certificate with a namespace-local cert-manager Issuer
@@ -107,6 +111,8 @@ networkPolicies:
   ingressNamespace: traefik
   # Namespace Prometheus runs in (allowed to scrape /metrics), Phase 8.
   monitoringNamespace: monitoring
+  # Let the in-cluster load-test Job seed Postgres (local clusters only).
+  allowLoadTest: false
 
 # Prometheus Operator resources (ServiceMonitor, PodMonitor, PrometheusRule) and
 # the Grafana dashboard ConfigMap. Needs kube-prometheus-stack's CRDs installed.

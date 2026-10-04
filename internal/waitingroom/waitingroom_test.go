@@ -129,3 +129,14 @@ func TestConcurrentAdmittersAdmitOneBatch(t *testing.T) {
 	wg.Wait()
 	assert.Equal(t, 4, total)
 }
+
+// The waiting room tells each buyer how long to wait before polling again:
+// people far back in line don't need updates every few seconds, and 50,000
+// buyers polling at a fixed fast rate overloaded the system (Phase 9).
+func TestPollAfterScalesWithPlaceInLine(t *testing.T) {
+	r := waitingroom.Rate{Batch: 500, Interval: 10 * time.Second}
+	assert.Equal(t, 5*time.Second, r.PollAfter(1), "near the front: poll often")
+	assert.Equal(t, 20*time.Second, r.PollAfter(2000), "4 batches away (40s): poll every 20s")
+	assert.Equal(t, 120*time.Second, r.PollAfter(40000), "800s away: poll every 2 minutes")
+	assert.Equal(t, 5*time.Second, waitingroom.Rate{}.PollAfter(10), "unknown rate: default")
+}

@@ -2,16 +2,22 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"ticket/internal/apperr"
 )
 
 // Postgres rejects NUL bytes in text; that must surface as a client error, not a 500.
@@ -88,4 +94,52 @@ func TestMetricsUseRoutePatternsAndRequestIDHeader(t *testing.T) {
 		"labelled by route pattern, not by the raw id")
 	assert.NotContains(t, string(body), "00000000-0000-0000-0000-000000000009")
 	assert.Contains(t, string(body), "ticket_http_request_duration_seconds_bucket")
+}
+
+// A client that hangs up mid-request isn't a server fault: report 499 and don't
+// log it as an internal error (it would drown real errors during an overload).
+func TestClientDisconnectIs499NotInternal(t *testing.T) {
+	var logs bytes.Buffer
+	s := &Server{Deps: Deps{Log: slog.New(slog.NewJSONHandler(&logs, nil))}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := httptest.NewRequest("GET", "/v1/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.writeError(rec, r, fmt.Errorf("query: %w", context.Canceled))
+	assert.Equal(t, 499, rec.Code)
+	assert.NotContains(t, logs.String(), "internal error")
+}
+
+// Readiness must not depend on the shared connection pool: when the pool is
+// saturated under load, every pod's check would fail at once and the load
+// balancer would drop all of them (Phase 9 found exactly this). It only fails
+// after the database has been unreachable for a sustained period.
+func TestReadinessToleratesBriefDBTrouble(t *testing.T) {
+	h := NewDBHealth("", 10*time.Second)
+	now := time.Now()
+	h.now = func() time.Time { return now }
+	h.record(nil)
+	assert.NoError(t, h.Ready())
+
+	h.record(errors.New("pool exhausted"))
+	now = now.Add(9 * time.Second)
+	assert.NoError(t, h.Ready(), "brief trouble: stay in the load balancer")
+
+	now = now.Add(2 * time.Second)
+	assert.Error(t, h.Ready(), "unreachable for over 10s: take this pod out")
+
+	h.record(nil)
+	assert.NoError(t, h.Ready(), "recovers as soon as a check succeeds")
+}
+
+// A 503 (payments down, database unreachable) tells the client when to come back,
+// so well-behaved clients wait out a circuit breaker's cooldown instead of
+// giving up or hammering the API (Phase 9 chaos test).
+func TestServiceUnavailableSendsRetryAfter(t *testing.T) {
+	s := &Server{Deps: Deps{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	rec := httptest.NewRecorder()
+	s.writeError(rec, httptest.NewRequest("POST", "/v1/holds/x/checkout", nil),
+		&apperr.Error{Status: 503, Code: "PAYMENT_UNAVAILABLE", Message: "down"})
+	assert.Equal(t, 503, rec.Code)
+	assert.Equal(t, "10", rec.Header().Get("Retry-After"))
 }

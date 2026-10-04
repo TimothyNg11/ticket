@@ -8,6 +8,8 @@
 package cache
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,16 +31,20 @@ import (
 
 // TTLs from the spec's caching table.
 const (
-	seatMapTTL   = 2 * time.Second  // short: seat maps change constantly during a sale
-	staleTTL     = 30 * time.Second // served while one request rebuilds an expired map
+	seatMapTTL   = 2 * time.Second // short: seat maps change constantly during a sale
 	eventTTL     = 5 * time.Minute
 	eventListTTL = 30 * time.Second
 	rebuildLock  = 2 * time.Second
+	// coalesceWindow: after a rebuild, readers of newer versions get that copy for
+	// this long instead of rebuilding again. Under a purchase burst the version
+	// changes many times a second; without this, every change costs a database
+	// query and the cache never hits.
+	coalesceWindow = 250 * time.Millisecond
 )
 
 // Stats counts cache outcomes (exported as metrics in Phase 8).
 type Stats struct {
-	Hits, Misses, StaleServed, Rebuilds, Errors atomic.Int64
+	Hits, Misses, Coalesced, StaleServed, Rebuilds, Errors atomic.Int64
 }
 
 // Cache serves cached inventory reads.
@@ -48,6 +54,8 @@ type Cache struct {
 	sf    singleflight.Group
 	log   *slog.Logger
 	Stats Stats
+
+	buildHook func() // tests only: called at the start of a rebuild
 }
 
 // New returns a Cache over inv.
@@ -56,7 +64,8 @@ func New(rdb *redis.Client, inv *inventory.Service, log *slog.Logger) *Cache {
 }
 
 func seatMapVerKey(id uuid.UUID) string       { return "seatmap:" + id.String() + ":ver" }
-func seatMapStaleKey(id uuid.UUID) string     { return "seatmap:" + id.String() + ":stale" }
+func seatMapLatestKey(id uuid.UUID) string    { return "seatmap:" + id.String() + ":latest" }
+func seatMapFreshKey(id uuid.UUID) string     { return "seatmap:" + id.String() + ":fresh" }
 func eventKey(id uuid.UUID) string            { return "event:" + id.String() }
 func availKey(id uuid.UUID) string            { return "avail:" + id.String() }
 func seatMapKey(id uuid.UUID, v int64) string { return fmt.Sprintf("seatmap:%s:v%d", id, v) }
@@ -75,72 +84,122 @@ func (c *Cache) fail(ctx context.Context, op string, err error) {
 	c.log.WarnContext(ctx, "cache unavailable, reading from database", "op", op, "err", err)
 }
 
-// SeatMap returns an event's seat map.
+func (c *Cache) count(result string, n *atomic.Int64) {
+	n.Add(1)
+	metrics.CacheLookups.WithLabelValues("seatmap", result).Inc()
+}
+
+// SeatMapJSON returns an event's seat map as the finished API response body,
+// gzip-compressed. Handlers write these bytes as-is, so serving the read storm of
+// an on-sale costs no JSON work per request (Phase 9 profiling found decoding
+// and re-encoding the cached map was two thirds of API CPU).
 //
-// The key carries a version number that every seat change bumps
-// (seatmap:{event}:v{n}), so invalidation is one INCR and no reader can see a map
-// older than the last change plus the 2-second TTL. When a hot key is missing,
-// only one request per pod (singleflight) and, via a short Redis lock, one pod
-// overall rebuilds it; the rest serve the previous version ("stale") meanwhile.
-func (c *Cache) SeatMap(ctx context.Context, eventID uuid.UUID) (inventory.SeatMap, error) {
+// Freshness: the key carries a version that every seat change bumps
+// (seatmap:{event}:v{n}). A reader that finds its version missing gets the most
+// recent map if one was built in the last 250 ms (coalescing), and otherwise
+// rebuilds it: once per pod (singleflight) and, via a short Redis lock, once
+// across pods while the others serve the latest copy. Every copy expires within
+// 2 s, so no reader sees a map older than that. Holds are still decided by row
+// locks in Postgres, so a slightly old map can only cost a buyer a retry.
+func (c *Cache) SeatMapJSON(ctx context.Context, eventID uuid.UUID) ([]byte, error) {
 	ver, err := c.rdb.Get(ctx, seatMapVerKey(eventID)).Int64()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		c.fail(ctx, "seatmap", err)
-		return c.inv.SeatMap(ctx, eventID)
+		return c.buildJSON(ctx, eventID)
 	}
 	key := seatMapKey(eventID, ver)
-	if sm, ok := c.getSeatMap(ctx, key); ok {
-		c.Stats.Hits.Add(1)
-		metrics.CacheLookups.WithLabelValues("seatmap", "hit").Inc()
-		return sm, nil
+	// One round trip: the current version, the latest copy, and whether that
+	// copy is inside the coalescing window.
+	vals, err := c.rdb.MGet(ctx, key, seatMapLatestKey(eventID), seatMapFreshKey(eventID)).Result()
+	if err != nil {
+		c.fail(ctx, "seatmap", err)
+		return c.buildJSON(ctx, eventID)
 	}
-	c.Stats.Misses.Add(1)
-	metrics.CacheLookups.WithLabelValues("seatmap", "miss").Inc()
+	if b, ok := vals[0].(string); ok {
+		c.count("hit", &c.Stats.Hits)
+		return []byte(b), nil
+	}
+	if latest, ok := vals[1].(string); ok && vals[2] != nil {
+		c.count("coalesced", &c.Stats.Coalesced)
+		return []byte(latest), nil
+	}
+	c.count("miss", &c.Stats.Misses)
 
 	v, err, _ := c.sf.Do(key, func() (any, error) {
+		// The flight is shared by every request waiting on this key, so it must not
+		// run on any one caller's context: if that client disconnected, the
+		// cancellation would fail every other waiter too (Phase 9 found thousands
+		// of 500s from exactly this). Detach, with a timeout of its own.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
 		// Check again: a request that missed just before another flight finished
 		// would otherwise start a second flight and rebuild a key that's now filled.
-		if sm, ok := c.getSeatMap(ctx, key); ok {
-			return sm, nil
+		if b, err := c.rdb.Get(ctx, key).Bytes(); err == nil {
+			return b, nil
 		}
 		got, err := c.rdb.SetNX(ctx, "lock:"+key, 1, rebuildLock).Result()
 		if err == nil && !got {
-			// Another pod is rebuilding: serve the last known map if there is one.
-			if sm, ok := c.getSeatMap(ctx, seatMapStaleKey(eventID)); ok {
-				c.Stats.StaleServed.Add(1)
-				metrics.CacheLookups.WithLabelValues("seatmap", "stale").Inc()
-				return sm, nil
+			// Another pod is rebuilding: serve the latest copy (at most 2 s old).
+			if b, err := c.rdb.Get(ctx, seatMapLatestKey(eventID)).Bytes(); err == nil {
+				c.count("stale", &c.Stats.StaleServed)
+				return b, nil
 			}
 		}
-		c.Stats.Rebuilds.Add(1)
-		sm, err := c.inv.SeatMap(ctx, eventID)
+		b, err := c.buildJSON(ctx, eventID)
 		if err != nil {
 			return nil, err
 		}
-		if b, err := json.Marshal(sm); err == nil {
-			pipe := c.rdb.Pipeline()
-			pipe.Set(ctx, key, b, jitter(seatMapTTL))
-			pipe.Set(ctx, seatMapStaleKey(eventID), b, staleTTL)
-			pipe.Del(ctx, "lock:"+key)
-			if _, err := pipe.Exec(ctx); err != nil {
-				c.fail(ctx, "seatmap fill", err)
-			}
+		pipe := c.rdb.Pipeline()
+		pipe.Set(ctx, key, b, jitter(seatMapTTL))
+		pipe.Set(ctx, seatMapLatestKey(eventID), b, seatMapTTL)
+		pipe.Set(ctx, seatMapFreshKey(eventID), 1, coalesceWindow)
+		pipe.Del(ctx, "lock:"+key)
+		if _, err := pipe.Exec(ctx); err != nil {
+			c.fail(ctx, "seatmap fill", err)
 		}
-		return sm, nil
+		return b, nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return v.([]byte), nil
+}
+
+// buildJSON reads the seat map from Postgres and encodes and compresses it once.
+func (c *Cache) buildJSON(ctx context.Context, eventID uuid.UUID) ([]byte, error) {
+	c.Stats.Rebuilds.Add(1)
+	if c.buildHook != nil {
+		c.buildHook()
+	}
+	sm, err := c.inv.SeatMap(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
+	if err := json.NewEncoder(zw).Encode(sm); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// SeatMap returns an event's seat map decoded, for callers that need the data
+// rather than the response body. It shares SeatMapJSON's cache.
+func (c *Cache) SeatMap(ctx context.Context, eventID uuid.UUID) (inventory.SeatMap, error) {
+	gz, err := c.SeatMapJSON(ctx, eventID)
 	if err != nil {
 		return inventory.SeatMap{}, err
 	}
-	return v.(inventory.SeatMap), nil
-}
-
-func (c *Cache) getSeatMap(ctx context.Context, key string) (inventory.SeatMap, bool) {
-	b, err := c.rdb.Get(ctx, key).Bytes()
+	zr, err := gzip.NewReader(bytes.NewReader(gz))
 	if err != nil {
-		return inventory.SeatMap{}, false
+		return inventory.SeatMap{}, err
 	}
 	var sm inventory.SeatMap
-	return sm, json.Unmarshal(b, &sm) == nil
+	err = json.NewDecoder(zr).Decode(&sm)
+	return sm, err
 }
 
 // SeatsChanged is the booking hook: it invalidates the event's seat map and
