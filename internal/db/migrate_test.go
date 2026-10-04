@@ -51,3 +51,17 @@ func TestEventSeatStateConstraint(t *testing.T) {
 		`INSERT INTO event_seats (event_id, seat_id, price_cents) VALUES ($1, $2, 100)`, eventID, seatID)
 	assert.ErrorContains(t, err, "duplicate key", "one row per seat per event")
 }
+
+// Rolling back a release must work even though the newer release already
+// migrated the schema forward. Migrations are backward compatible (expand, then
+// contract in a later release), so older code runs on the newer schema; the
+// migrator must not refuse to start (Phase 10 found exactly this on rollback).
+func TestMigrateToleratesNewerSchema(t *testing.T) {
+	pool := pg.NewDB(t)
+	url := pg.URL(t, pool)
+	_, err := pool.Exec(context.Background(), `UPDATE schema_migrations SET version = 999`)
+	require.NoError(t, err)
+	pool.Close()
+
+	assert.NoError(t, db.Migrate(url), "a database ahead of this build is fine")
+}
