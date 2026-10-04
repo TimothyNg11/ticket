@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof" //nolint:gosec // served only on PPROF_ADDR, an internal port
 	"os"
 	"os/signal"
 	"sync/atomic"
@@ -81,6 +82,7 @@ func serve(log *slog.Logger) error {
 		return err
 	}
 	pcfg.ConnConfig.Tracer = observability.NewDBTracer() // a span per query
+	pcfg.MaxConns = int32(min(cfg.DBMaxConns, 1000))     //nolint:gosec // clamped
 	pool, err := pgxpool.NewWithConfig(ctx, pcfg)
 	if err != nil {
 		return err
@@ -93,11 +95,13 @@ func serve(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("REDIS_URL: %w", err)
 	}
+	ropt.PoolSize = cfg.RedisPoolSize
 	rdb := redis.NewClient(ropt)
 	defer func() { _ = rdb.Close() }()
 	if err := redisotel.InstrumentTracing(rdb); err != nil {
 		return err
 	}
+	observability.RegisterRedisPoolMetrics(rdb)
 
 	inv := inventory.New(pool)
 	c := cache.New(rdb, inv, log)
@@ -114,10 +118,13 @@ func serve(log *slog.Logger) error {
 
 	tokens := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	var draining atomic.Bool
+	dbHealth := httpapi.NewDBHealth(cfg.DatabaseURL, 10*time.Second)
+	go dbHealth.Run(ctx)
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewHandler(httpapi.Deps{
 			Draining:   &draining,
+			DBHealth:   dbHealth,
 			Pool:       pool,
 			Tokens:     tokens,
 			Accounts:   account.New(pool, tokens, cfg.RefreshTokenTTL, cfg.AdminEmails),
@@ -134,6 +141,19 @@ func serve(log *slog.Logger) error {
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
+	}
+
+	// Go's profiler on a separate, internal-only port (never exposed by the
+	// Service or ingress): kubectl port-forward pod/<api> 6060, then
+	// go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
+	if addr := os.Getenv("PPROF_ADDR"); addr != "" {
+		go func() {
+			ps := &http.Server{Addr: addr, Handler: http.DefaultServeMux, ReadHeaderTimeout: 5 * time.Second}
+			log.Info("pprof listening", "addr", addr)
+			if err := ps.ListenAndServe(); err != nil {
+				log.Warn("pprof stopped", "err", err)
+			}
+		}()
 	}
 
 	errc := make(chan error, 1)

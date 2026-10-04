@@ -69,6 +69,8 @@ never appears in a ConfigMap or the rendered manifest.
   value: {{ .Values.config.drainDelay | quote }}
 - name: TRUST_PROXY
   value: "true"
+- name: PPROF_ADDR
+  value: {{ .Values.config.pprofAddr | quote }}
 # Tell the Go runtime its memory budget so the GC works harder before the kernel
 # OOM-kills the container: GOMEMLIMIT = the container's memory limit.
 - name: MEM_LIMIT_MIB

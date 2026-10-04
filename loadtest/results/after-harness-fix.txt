@@ -1,0 +1,75 @@
+[after-harness-fix] event 6f1bca64-1947-473d-8c4e-9f68d5a9a9b8: 5000 seats, 50000 buyers, admit 500 every 10s
+  t= 11s admitted=0 bought=0 seats=0 lost_races=0
+  t= 21s admitted=175 bought=0 seats=0 lost_races=0
+  t= 31s admitted=378 bought=0 seats=0 lost_races=0
+  t= 41s admitted=657 bought=0 seats=0 lost_races=0
+  t= 51s admitted=993 bought=0 seats=0 lost_races=0
+  t= 61s admitted=1008 bought=0 seats=0 lost_races=0
+  t= 71s admitted=1157 bought=0 seats=0 lost_races=0
+  t= 81s admitted=1269 bought=0 seats=0 lost_races=2
+  t= 91s admitted=1281 bought=0 seats=0 lost_races=2
+  t=101s admitted=1281 bought=0 seats=0 lost_races=2
+  t=111s admitted=1281 bought=0 seats=0 lost_races=2
+  t=121s admitted=1281 bought=0 seats=0 lost_races=2
+  t=131s admitted=1452 bought=3 seats=7 lost_races=7
+  t=141s admitted=1837 bought=15 seats=37 lost_races=16
+  t=151s admitted=1874 bought=15 seats=37 lost_races=17
+  t=161s admitted=1874 bought=15 seats=37 lost_races=17
+  t=171s admitted=1877 bought=15 seats=37 lost_races=17
+  t=181s admitted=1877 bought=15 seats=37 lost_races=17
+  t=191s admitted=1907 bought=21 seats=52 lost_races=18
+  t=201s admitted=2276 bought=31 seats=77 lost_races=23
+  t=211s admitted=2278 bought=31 seats=77 lost_races=23
+  t=221s admitted=2326 bought=34 seats=86 lost_races=27
+  t=231s admitted=2373 bought=41 seats=97 lost_races=29
+  t=241s admitted=2373 bought=41 seats=97 lost_races=29
+  t=251s admitted=2410 bought=43 seats=101 lost_races=34
+  t=261s admitted=2818 bought=50 seats=114 lost_races=47
+  t=271s admitted=4169 bought=50 seats=114 lost_races=48
+  t=281s admitted=4272 bought=73 seats=163 lost_races=85
+  t=291s admitted=5126 bought=84 seats=194 lost_races=119
+  t=301s admitted=5631 bought=84 seats=194 lost_races=121
+  t=311s admitted=5631 bought=84 seats=194 lost_races=121
+  t=321s admitted=5720 bought=84 seats=194 lost_races=123
+  t=331s admitted=5731 bought=84 seats=194 lost_races=124
+  t=341s admitted=5731 bought=86 seats=198 lost_races=125
+  t=351s admitted=5736 bought=92 seats=210 lost_races=129
+  t=361s admitted=5736 bought=92 seats=210 lost_races=129
+  t=371s admitted=5736 bought=92 seats=210 lost_races=129
+  t=381s admitted=5736 bought=92 seats=210 lost_races=129
+  t=391s admitted=5758 bought=92 seats=210 lost_races=129
+  t=401s admitted=5933 bought=92 seats=210 lost_races=131
+  t=411s admitted=6527 bought=92 seats=210 lost_races=146
+  t=421s admitted=7112 bought=92 seats=210 lost_races=146
+  t=431s admitted=7563 bought=100 seats=225 lost_races=160
+  t=441s admitted=7841 bought=100 seats=225 lost_races=162
+  t=451s admitted=8495 bought=105 seats=236 lost_races=162
+  t=461s admitted=8590 bought=109 seats=245 lost_races=162
+  t=471s admitted=8598 bought=110 seats=247 lost_races=190
+  t=481s admitted=9056 bought=111 seats=249 lost_races=192
+  t=491s admitted=9584 bought=111 seats=249 lost_races=192
+  t=501s admitted=9699 bought=111 seats=249 lost_races=197
+  t=511s admitted=9735 bought=112 seats=250 lost_races=326
+  t=521s admitted=10129 bought=162 seats=366 lost_races=425
+  t=531s admitted=10197 bought=267 seats=588 lost_races=571
+  t=541s admitted=10255 bought=379 seats=833 lost_races=690
+  t=551s admitted=10468 bought=490 seats=1083 lost_races=862
+  t=561s admitted=10540 bought=615 seats=1355 lost_races=994
+  t=571s admitted=10626 bought=770 seats=1677 lost_races=1372
+  t=581s admitted=10990 bought=872 seats=1894 lost_races=1549
+  t=591s admitted=11047 bought=939 seats=2032 lost_races=1615
+  t=601s admitted=11052 bought=979 seats=2108 lost_races=1658
+  t=611s admitted=11052 bought=979 seats=2108 lost_races=1658
+  t=621s admitted=11052 bought=979 seats=2108 lost_races=1658
+  t=631s admitted=11052 bought=979 seats=2108 lost_races=1658
+  t=641s admitted=11052 bought=979 seats=2108 lost_races=1658
+  t=651s admitted=11057 bought=979 seats=2108 lost_races=1658
+  t=661s admitted=11057 bought=979 seats=2108 lost_races=1658
+  t=671s admitted=11151 bought=983 seats=2120 lost_races=1675
+  t=681s admitted=11688 bought=1224 seats=2598 lost_races=1956
+  t=691s admitted=12113 bought=1398 seats=2953 lost_races=2424
+  t=701s admitted=13212 bought=1560 seats=3289 lost_races=2796
+  t=711s admitted=13799 bought=1663 seats=3485 lost_races=3464
+  t=721s admitted=14325 bought=1779 seats=3710 lost_races=4413
+  t=731s admitted=14748 bought=1849 seats=3831 lost_races=5312
+  t=741s admitted=15097 bought=1917 seats=3928 lost_races=6389

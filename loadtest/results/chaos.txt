@@ -1,0 +1,15 @@
+[chaos t=15s] kill an API pod
+[chaos t=31s] kill the payment service
+[chaos t=48s] payments: 40% errors (half after charging), 1.5s latency
+[chaos t=63s] kill Redis (cache, rate limits, queue, streams)
+[chaos t=78s] kill the reconciler and the outbox relay
+[chaos t=95s] payments healthy again
+event 380e214b-b131-476b-b138-8d4c2d43fd0d: 2000 seats, 300 buyers, 2m0s
+confirmed=2147 cancelled=218 seat_taken=894 rate_limited=0 retries=47 failed=0
+invariants: map[confirmed_orders_not_paid_exactly_once:0 confirmed_orders_ticket_mismatch:0 held_seats_without_active_hold:0 seats_with_multiple_valid_tickets:0 sold_seats_without_confirmed_order:0 total:0]
+FLASHSALE OK
+[chaos t=144s] waiting for the reconciler and relay to settle everything
+[chaos t=146s] pending_payment=0 outbox_unpublished=0 cancelled_awaiting_refund=0
+[chaos t=146s] orders: confirmed=25413 failed=19 refunded=685
+[chaos t=147s] invariant violations: 0
+CHAOS OK

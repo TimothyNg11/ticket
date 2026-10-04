@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -23,7 +25,11 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		start := time.Now()
 		reqID := middleware.GetReqID(r.Context())
 		w.Header().Set("X-Request-Id", reqID) // so clients can quote it in bug reports
-		r = r.WithContext(observability.WithRequestID(r.Context(), reqID))
+		ctx := observability.WithRequestID(r.Context(), reqID)
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			ctx = context.WithValue(ctx, gzipKey{}, true)
+		}
+		r = r.WithContext(ctx)
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 
 		next.ServeHTTP(ww, r)
@@ -54,4 +60,12 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		}
 		s.Log.InfoContext(r.Context(), "request", attrs...)
 	})
+}
+
+type gzipKey struct{}
+
+// acceptsGzip reports whether the client sent Accept-Encoding: gzip.
+func acceptsGzip(ctx context.Context) bool {
+	ok, _ := ctx.Value(gzipKey{}).(bool)
+	return ok
 }

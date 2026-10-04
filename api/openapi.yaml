@@ -73,9 +73,11 @@ paths:
     post:
       operationId: joinQueue
       summary: Join the waiting room for a high-demand event.
-      description: Joining again returns your existing place. Poll GET /v1/queue/{token} until admitted.
+      description: >
+        Joining again returns your existing place, so no Idempotency-Key is needed.
+        Poll GET /v1/queue/{token} until admitted.
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "#/components/parameters/ID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
       responses:
         "200": { description: Your place in line, content: { application/json: { schema: { $ref: "#/components/schemas/QueueStatus" } } } }
         default: { $ref: "#/components/responses/Error" }
@@ -403,8 +405,10 @@ components:
       properties:
         queue_token: { type: string, description: "Poll GET /v1/queue/{token} with this." }
         admitted: { type: boolean }
+        sold_out: { type: boolean, description: "No seats are left; stop waiting." }
         position: { type: integer, description: 1-based place in line while waiting. }
         estimated_wait_seconds: { type: integer }
+        poll_after_seconds: { type: integer, description: "Wait this long before polling again (server-directed backoff)." }
         admission_token: { type: string, description: Send as the Admission-Token header when holding seats. }
         admission_expires_at: { type: string, format: date-time }
     Invariants:

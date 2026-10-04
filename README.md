@@ -55,8 +55,17 @@ Requires kind, kubectl, helm, and openssl as well.
 
 ```bash
 deploy/kind/up.sh                              # 3-node cluster, Traefik, cert-manager, metrics-server, the chart
-BASE_URL=http://localhost go run ./tools/smoke # end-to-end through the ingress (https://localhost also works, self-signed)
+BASE_URL=http://localhost:18080 go run ./tools/smoke  # through the ingress (https://localhost:18443 also works, self-signed)
 deploy/kind/kill-api-during-sale.sh 60         # 60s flash sale while deleting API pods; must end with zero failures
+```
+
+## Load and chaos tests (on kind)
+
+```bash
+loadtest/job.sh my-run 50000                  # 50,000-buyer on-sale, run inside the cluster; prints client + server-side numbers
+loadtest/k6-job.sh loadtest/k6/seatmap.js seatmap-reads EVENT_ID=<uuid>   # seat-map read throughput
+BASE=http://localhost:18080 loadtest/chaos.sh  # kill pods/Redis/payments mid-sale; must settle with zero violations
+loadtest/profile-under-load.sh                 # 30 s CPU profile of an API pod under load
 ```
 
 ## Run tests
@@ -104,6 +113,8 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | `deploy/helm/ticket` | Helm chart (values for local kind and cloud) |
 | `deploy/observability` | Dashboard generator, alert-rule tests, latency-spike drill |
 | `deploy/kind` | kind cluster config, bootstrap script, pod-kill test |
+| `loadtest/` | On-sale simulator, buyer seeder, k6 scripts, chaos and profiling scripts, results |
+| `internal/loadclient` | Retrying, idempotent HTTP client with latency recording for the load tools |
 | `tools/flashsale` | Timed on-sale load + correctness check against a live deployment |
 | `tools/smoke` | End-to-end smoke check |
 
@@ -119,5 +130,5 @@ docker run --rm -v "$PWD:/src" -w /src sqlc/sqlc:1.30.0 generate            # SQ
 | 6 | Reliability: retries + circuit breaker, transactional outbox, reconciler, graceful shutdown | Done |
 | 7 | Kubernetes: Helm chart, kind, probes, HPA, PDB, PgBouncer, NetworkPolicies, TLS ingress | Done |
 | 8 | Observability: Prometheus metrics, Grafana on-sale dashboard, JSON logs with request/trace ids, OpenTelemetry traces, tested alerts, invariant checker | Done |
-| 9 | Load and chaos testing | Pending |
+| 9 | Load and chaos testing: 50,000-buyer on-sale, k6 read benchmark, chaos experiments, 8 measured fixes ([BENCHMARKS.md](BENCHMARKS.md)) | Done |
 | 10 | Delivery (GitOps) | Pending |
